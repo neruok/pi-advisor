@@ -35,6 +35,39 @@ Saves default to `<agent-dir>/advisor.json`. Use `--project` for `<cwd>/.pi/advi
 
 Use normal Pi authentication. No model fallback occurs. Configuration changes affect new consultations only.
 
+## Reasoning effort
+
+```text
+/advisor reasoning
+/advisor reasoning high
+/advisor --project reasoning medium
+```
+
+The query shows the effective model, configured effort, and supported choices without a provider request or settings write.
+Set effort with `default`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Only advertised model levels are accepted. Unsupported levels return `unsupported-reasoning`; the extension does not clamp them or select another model.
+
+Settings store effort inside the complete model selection:
+
+```json
+{
+  "model": { "provider": "your-provider", "model": "your-model-id", "reasoning": "high" }
+}
+```
+
+Omitted effort and `default` keep legacy provider behavior, without inheriting the parent thinking level. As in pi-magic8ball, `off` omits the SDK reasoning option and requires advertised off support. Other explicit levels reach each request unchanged. Provider adapters can map those levels to model-specific budgets. Higher reasoning can increase cost and latency; it is not a monetary cap or a guarantee of provider behavior.
+
+The model and reasoning are pinned for each consultation. Existing sessions do not change when you edit settings. Explicit effort appears in result and discovery model metadata. Expand a reply to see its effort label. Thinking remains excluded from advice and history.
+
+Global writes use the global model, not a project override. Trusted project writes copy the effective complete selection when necessary. A project selection replaces the whole global selection, including effort. Selecting a model through the command or picker resets effort to legacy behavior; set effort afterward.
+
+## Command autocomplete
+
+The registered `/advisor` argument autocomplete suggests subcommands, scope flags, available physical chat providers, fuzzy model identifiers/names, and supported reasoning levels. One scope flag can appear before, between, or after arguments. Reasoning suggestions target the save scope: global by default, or the effective model for a trusted project.
+
+Selecting a suggestion inserts text and does not save settings or run a model. Submit the command to apply it. Dynamic choices use current catalog and settings snapshots without remote catalog refreshes.
+
+Pi 1.0.4 has a Tab-routing limitation after command-name completion: accepting `/advisor ` with Tab can make another Tab miss argument completion. Type an argument prefix, such as `rea`, and wait for its completion menu, then accept the suggestion. This extension does not replace or patch the host editor.
+
 ## Consultation tools
 
 Start:

@@ -1,8 +1,10 @@
 import type { AssistantMessage, Usage } from '@earendil-works/pi-ai';
 
 export const LIMITS = Object.freeze({ sessions: 8, turns: 24, messageBytes: 16384, replyBytes: 16384, historyBytes: 49152, timeoutMs: 120000, maxTokens: 4096 });
-export type Selection = { provider: string; model: string };
-export type ErrorCode = 'invalid-argument' | 'not-found' | 'busy' | 'limit-exceeded' | 'not-configured' | 'invalid-config' | 'settings-unavailable' | 'model-unavailable' | 'provider-failed' | 'invalid-response' | 'cancelled' | 'timeout';
+export const REASONING_LEVELS = ['default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type Reasoning = typeof REASONING_LEVELS[number];
+export type Selection = { provider: string; model: string; reasoning?: Reasoning };
+export type ErrorCode = 'invalid-argument' | 'not-found' | 'busy' | 'limit-exceeded' | 'not-configured' | 'invalid-config' | 'settings-unavailable' | 'model-unavailable' | 'unsupported-reasoning' | 'provider-failed' | 'invalid-response' | 'cancelled' | 'timeout';
 const ERRORS: Record<ErrorCode, string> = {
   'invalid-argument': 'Use a nonblank message and an existing session identifier, if supplied.',
   'not-found': 'Consultation not found. It may have closed or its parent session may have changed.',
@@ -12,6 +14,7 @@ const ERRORS: Record<ErrorCode, string> = {
   'invalid-config': 'Advisor settings must be strict JSON with one optional model selection.',
   'settings-unavailable': 'Cannot safely read or save advisor settings. Inspect settings and locks before retrying.',
   'model-unavailable': 'Configured advisor model is unavailable, virtual, or lacks authentication.',
+  'unsupported-reasoning': 'Configured advisor reasoning is not supported by the selected model. Use /advisor reasoning to inspect supported levels.',
   'provider-failed': 'Advisor provider request failed. No exchange was committed.',
   'invalid-response': 'Advisor reply was not a usable text completion. No exchange was committed.',
   cancelled: 'Advisor request cancelled. No exchange was committed.',
@@ -63,9 +66,10 @@ export function object(value: unknown, keys: string[], code: ErrorCode): Record<
   return value as Record<string, unknown>;
 }
 export function parseSelection(value: unknown): Selection {
-  const pair = object(value, ['provider', 'model'], 'invalid-config');
+  const pair = object(value, ['provider', 'model', 'reasoning'], 'invalid-config');
   for (const value of [pair.provider, pair.model]) if (typeof value !== 'string' || !value || /[\s\x00-\x1f\x7f-\x9f]/u.test(value)) throw new AdvisorError('invalid-config');
-  return { provider: pair.provider as string, model: pair.model as string };
+  if (pair.reasoning !== undefined && !REASONING_LEVELS.includes(pair.reasoning as Reasoning)) throw new AdvisorError('invalid-config');
+  return { provider: pair.provider as string, model: pair.model as string, ...(pair.reasoning === undefined ? {} : { reasoning: pair.reasoning as Reasoning }) };
 }
 export function parseInput(value: unknown): { message: string; session?: string } {
   const input = object(value, ['message', 'session'], 'invalid-argument');

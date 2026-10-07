@@ -49,6 +49,7 @@ function resultLines(kind: Kind, data: Data | undefined, options: ToolRenderResu
     const lines = [...styled('accent', header(data)), ...styled('muted', usageLine(data.usage, data.usageComplete))];
     if (options.expanded) {
       lines.push(...styled('muted', `${label(data.model.provider)}/${label(data.model.model)}`));
+      lines.push(...styled('muted', `Reasoning: ${data.model.reasoning ?? 'default (legacy provider behavior)'}`));
       lines.push(...styled('muted', `Consultation total: ${usageLine(data.totalUsage, data.totalUsageComplete)}`));
     }
     const adviceRows = styled('toolOutput', value(data.response));

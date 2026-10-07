@@ -98,7 +98,8 @@ export class Consultations {
         usageComplete = false;
         return deps.complete(model, context(pending, model), {
           signal: controller!.signal, timeoutMs: Math.max(1, this.limits.timeoutMs - (performance.now() - started)), maxRetries: 0,
-          maxTokens: this.limits.maxTokens, toolChoice: 'none', cacheRetention: 'none', sessionId: session!.id
+          maxTokens: this.limits.maxTokens, toolChoice: 'none', cacheRetention: 'none', sessionId: session!.id,
+          ...(model.reasoning && model.reasoning !== 'default' && model.reasoning !== 'off' ? { reasoning: model.reasoning } : {})
         });
       }, controller.signal);
       usage = addUsage(usage, reply.usage);

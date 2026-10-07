@@ -1,5 +1,5 @@
 import type { JsonValue, Usage } from '@earendil-works/pi-ai';
-import { getAgentDir, type ExtensionAPI, type ExtensionToolContext } from '@earendil-works/pi-coding-agent';
+import { getAgentDir, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext } from '@earendil-works/pi-coding-agent';
 import { Consultations, type Dependencies, type Metadata } from './lib/session.ts';
 import { AdvisorError, failure, object, type Failure } from './lib/protocol.ts';
 import { MAIN_GUIDANCE } from './lib/prompt.ts';
@@ -28,11 +28,11 @@ function result<T extends { ok: boolean; usage?: Usage }>(data: T) {
 }
 export default function advisor(pi: ExtensionAPI): void {
   const consultations = new Consultations();
-  registerSettingsCommand(pi);
-  const reset = async () => { consultations.clear(); };
+  const setCompletionContext = registerSettingsCommand(pi);
+  const reset = async (_event: unknown, ctx: ExtensionContext) => { consultations.clear(); setCompletionContext(ctx); };
   pi.on('session_start', reset);
   pi.on('session_tree', reset);
-  pi.on('session_shutdown', reset);
+  pi.on('session_shutdown', async () => { consultations.clear(); setCompletionContext(); });
   pi.registerTool({
     name: 'advisor', label: 'Advisor', exposure: 'model-only',
     description: 'Consult an isolated, tool-free advisor. Explain your problem, evidence and uncertainty. Omit session to start, or supply it to continue. Advice is not evidence or authorization. No automatic workspace or parent context access. Explicit host-configured model required. Provider calls may incur charges.',

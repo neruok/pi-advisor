@@ -1,7 +1,8 @@
 import { Type } from 'typebox';
+import { REASONING_LEVELS } from './protocol.ts';
 const text = Type.String({ minLength: 1 });
 const object = { additionalProperties: false };
-export const ModelSchema = Type.Object({ provider: text, model: text }, object);
+export const ModelSchema = Type.Object({ provider: text, model: text, reasoning: Type.Optional(Type.Union(REASONING_LEVELS.map(level => Type.Literal(level)))) }, object);
 export const UsageSchema = Type.Object({ input: Type.Number(), output: Type.Number(), cacheRead: Type.Number(), cacheWrite: Type.Number(), totalTokens: Type.Number(), reasoning: Type.Optional(Type.Number()), cacheWrite1h: Type.Optional(Type.Number()), cost: Type.Object({ input: Type.Number(), output: Type.Number(), cacheRead: Type.Number(), cacheWrite: Type.Number(), total: Type.Number() }, object) }, object);
 const totals = { totalUsage: UsageSchema, totalUsageComplete: Type.Boolean() };
 const LimitSchema = Type.Object({
