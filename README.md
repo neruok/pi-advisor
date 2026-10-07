@@ -112,7 +112,11 @@ Failures add `error.diagnostics` with a fixed `phase` and `category`. Phases are
 
 Categories distinguish `local-error`, `provider-error` (terminal error response), `provider-aborted` (terminal abort response), and `advisor-error` (an extension-defined failure). Thrown completion errors can report `authentication`, `provider-rejection`, `rate-limit`, or `transport` from recognized own data fields: HTTP `status` 401/403, 400/404/409/413/422, 429, or 408/500/502/503/504 respectively; transport `code` values ECONNRESET, ECONNREFUSED, ETIMEDOUT, ENOTFOUND, and EAI_AGAIN also map to `transport`. HTTP status takes precedence. Other completion exceptions report `unknown`.
 
-These are diagnostic hints, not proof of a root cause. Terminal responses in Pi can supply only a free-form error message; the extension does not parse or expose it. Credentials, headers, raw errors, causes, arbitrary payloads, rejected advice, and thinking remain excluded. Diagnostic fields appear in the tool result and can persist in the parent transcript. Zero reported usage still does not establish zero billing. Stop after a failed live call; enabling diagnostics is not permission to retry.
+Terminal SDK errors can report `category: "sdk-error"` and `code: "sdk-invalid-timeout"`. This identifies the fixed timeout validation error. The renderer shows: "SDK timeout must be a positive integer." Requests use an integer remaining timeout without extending the local deadline.
+
+The installed Responses adapter converts exceptions into terminal error text. Diagnostics read only its fixed SDK wrapper prefix, such as `xai API error (401): `. A matching wrapper adds `httpStatus` and the corresponding HTTP category. For xAI HTTP 400, an exact known rejection can add `code: "tool-choice-without-tools"`. This identifies a `tool_choice` setting without tool definitions. Unmapped statuses retain `provider-error`. Arbitrary error text, malformed wrappers, and unknown formats remain unclassified. Terminal aborts remain `provider-aborted`.
+
+These are diagnostic hints, not proof of a remote root cause. A terminal `provider-error` can also represent an unrecognized local SDK failure. The extension compares only fixed known rejection details. It does not expose the provider body. Credentials, headers, raw errors, causes, arbitrary payloads, rejected advice, and thinking remain excluded. Diagnostic fields appear in the tool result and can persist in the parent transcript. Zero reported usage still does not establish zero billing. Stop after a failed live call; enabling diagnostics is not permission to retry.
 
 ## Limits and retention
 
@@ -129,6 +133,8 @@ Hard local limits:
 - 120000 ms deadline per call.
 
 Each request asks for at most 4096 output tokens. Byte limits do not guarantee fit within every model's token context. Provider calls may incur charges, including replies rejected by validation. No monetary cap is enforced.
+
+Requests declare no tools and omit `toolChoice` for every provider. Pi controls provider payload construction without an advisor tool-choice override. Tool-call replies still fail validation.
 
 Limits fail closed. The extension never evicts or silently summarizes history.
 Limit failures retain `error.code = "limit-exceeded"` and add `error.limit = {resource, maximum, actual}`.

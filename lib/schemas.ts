@@ -12,6 +12,8 @@ const LimitSchema = Type.Object({
 export const DiagnosticsSchema = Type.Object({
   phase: Type.Union(FAILURE_PHASES.map(s => Type.Literal(s))),
   category: Type.Union(FAILURE_CATEGORIES.map(s => Type.Literal(s))),
+  code: Type.Optional(Type.Union([Type.Literal('sdk-invalid-timeout'), Type.Literal('tool-choice-without-tools')])),
+  httpStatus: Type.Optional(Type.Integer({ minimum: 400, maximum: 599 })),
   model: Type.Optional(ModelSchema),
   selectionSource: Type.Optional(Type.Union(['global', 'project', 'unknown'].map(s => Type.Literal(s))))
 }, object);

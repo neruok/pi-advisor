@@ -56,9 +56,9 @@ export function addUsage(a: Usage, b: Usage): Usage {
   return result;
 }
 export const FAILURE_PHASES = ['validation', 'preparation', 'completion', 'response-validation', 'commit'] as const;
-export const FAILURE_CATEGORIES = ['advisor-error', 'local-error', 'unknown', 'provider-error', 'provider-aborted', 'authentication', 'provider-rejection', 'rate-limit', 'transport'] as const;
+export const FAILURE_CATEGORIES = ['advisor-error', 'local-error', 'unknown', 'provider-error', 'provider-aborted', 'authentication', 'provider-rejection', 'rate-limit', 'transport', 'sdk-error'] as const;
 export type SelectionSource = 'global' | 'project' | 'unknown';
-export type Diagnostics = { phase: typeof FAILURE_PHASES[number]; category: typeof FAILURE_CATEGORIES[number]; model?: Selection; selectionSource?: SelectionSource };
+export type Diagnostics = { phase: typeof FAILURE_PHASES[number]; category: typeof FAILURE_CATEGORIES[number]; model?: Selection; selectionSource?: SelectionSource; code?: 'sdk-invalid-timeout' | 'tool-choice-without-tools'; httpStatus?: number };
 // Only recognized structured fields are used. Never inspect messages, causes, headers or payloads.
 export function completionCategory(error: unknown): Diagnostics['category'] {
   try {
@@ -72,6 +72,27 @@ export function completionCategory(error: unknown): Diagnostics['category'] {
     if (['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)) return 'transport';
   } catch { /* Unknown diagnostic metadata must not replace the original failure. */ }
   return 'unknown';
+}
+// Read only fixed SDK diagnostics and an exact known xAI rejection. Never return the provider body.
+export function terminalDiagnostics(reply: AssistantMessage, provider: string): Pick<Diagnostics, 'category' | 'code' | 'httpStatus'> {
+  const fallback = { category: 'provider-error' as const };
+  try {
+    const message = Object.getOwnPropertyDescriptor(reply, 'errorMessage')?.value;
+    if (typeof message !== 'string') return fallback;
+    if (message === 'timeout must be an integer' || message === 'timeout must be a positive integer') {
+      return { category: 'sdk-error', code: 'sdk-invalid-timeout' };
+    }
+    const prefix = `${provider === 'openai' ? 'OpenAI' : provider} API error (`;
+    if (!message.startsWith(prefix)) return fallback;
+    const match = /^([45][0-9]{2})\): /.exec(message.slice(prefix.length, prefix.length + 7));
+    if (!match) return fallback;
+    const httpStatus = Number(match[1]);
+    const category = completionCategory({ status: httpStatus });
+    const rejection = 'Invalid request content: A tool_choice was set on the request but no tools were specified.';
+    const detail = message.slice(prefix.length + match[0].length);
+    const noTools = provider === 'xai' && httpStatus === 400 && [rejection, rejection.slice('Invalid request content: '.length), `400 ${rejection}`].includes(detail);
+    return { category: category === 'unknown' ? 'provider-error' : category, httpStatus, ...(noTools ? { code: 'tool-choice-without-tools' as const } : {}) };
+  } catch { return fallback; }
 }
 export type UsageTotals = { totalUsage: Usage; totalUsageComplete: boolean };
 export type Failure = { ok: false; error: { code: ErrorCode; message: string; limit?: LimitDetails; diagnostics?: Diagnostics }; usage: Usage; usageComplete: boolean; session?: string } & Partial<UsageTotals>;

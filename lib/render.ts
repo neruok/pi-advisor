@@ -44,6 +44,9 @@ function resultLines(kind: Kind, data: Data | undefined, options: ToolRenderResu
     if (data.error.diagnostics) {
       const diagnostic = data.error.diagnostics;
       lines.push(theme.fg('muted', safe(`Failure phase: ${label(diagnostic.phase)} • category: ${label(diagnostic.category)}`)));
+      if (diagnostic.code === 'sdk-invalid-timeout') lines.push(theme.fg('error', 'SDK timeout must be a positive integer. No exchange was committed.'));
+      if (diagnostic.code === 'tool-choice-without-tools') lines.push(theme.fg('error', 'xAI rejected tool_choice without tools. No exchange was committed.'));
+      if (diagnostic.httpStatus !== undefined) lines.push(theme.fg('muted', safe(`HTTP status: ${diagnostic.httpStatus}`)));
       if (diagnostic.model) lines.push(theme.fg('muted', safe(`${label(diagnostic.model.provider)}/${label(diagnostic.model.model)} • ${label(diagnostic.selectionSource)} • reasoning: ${label(diagnostic.model.reasoning ?? 'default')}`)));
     }
     lines.push(theme.fg('muted', usageLine(data.usage, data.usageComplete)));

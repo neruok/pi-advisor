@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AssistantMessage, ModelsSimpleStreamOptions, Context, Usage } from '@earendil-works/pi-ai';
 import { ADVISOR_PROMPT } from './prompt.ts';
-import { AdvisorError, LIMITS, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, completionCategory, type Diagnostics, type Failure, type Selection, type SelectionSource, type UsageTotals } from './protocol.ts';
+import { AdvisorError, LIMITS, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, completionCategory, terminalDiagnostics, type Diagnostics, type Failure, type Selection, type SelectionSource, type UsageTotals } from './protocol.ts';
 
 type Exchange = { role: 'user' | 'assistant'; text: string };
 type Session = { id: string; label: string; model?: Selection; selectionSource?: SelectionSource; history: Exchange[]; usage: Usage; totalUsageComplete: boolean; pending?: AbortController };
@@ -73,7 +73,7 @@ export class Consultations {
     let usageComplete = true;
     const diagnosticsEnabled = Boolean(value && typeof value === 'object' && 'diagnostics' in value && value.diagnostics === true);
     let phase: Diagnostics['phase'] = 'validation';
-    let terminalCategory: Diagnostics['category'] | undefined;
+    let terminalHint: Pick<Diagnostics, 'category' | 'code' | 'httpStatus'> | undefined;
     let diagnosticModel: Selection | undefined;
     let selectionSource: SelectionSource = 'unknown';
     const started = performance.now();
@@ -111,14 +111,14 @@ export class Consultations {
         if (controller!.signal.aborted) throw controller!.signal.reason;
         usageComplete = false;
         return deps.complete(model, context(pending, model), {
-          signal: controller!.signal, timeoutMs: Math.max(1, this.limits.timeoutMs - (performance.now() - started)), maxRetries: 0,
-          maxTokens: this.limits.maxTokens, toolChoice: 'none', cacheRetention: 'none', sessionId: session!.id,
+          signal: controller!.signal, timeoutMs: Math.max(1, Math.floor(this.limits.timeoutMs - (performance.now() - started))), maxRetries: 0,
+          maxTokens: this.limits.maxTokens, cacheRetention: 'none', sessionId: session!.id,
           ...(model.reasoning && model.reasoning !== 'default' && model.reasoning !== 'off' ? { reasoning: model.reasoning } : {})
         });
       }, controller.signal);
       phase = 'response-validation';
-      if (reply.stopReason === 'error') terminalCategory = 'provider-error';
-      if (reply.stopReason === 'aborted') terminalCategory = 'provider-aborted';
+      if (reply.stopReason === 'error') terminalHint = diagnosticsEnabled ? terminalDiagnostics(reply, model.provider) : { category: 'provider-error' };
+      if (reply.stopReason === 'aborted') terminalHint = { category: 'provider-aborted' };
       usage = addUsage(usage, reply.usage);
       usageComplete = true;
       const response = replyText(reply);
@@ -141,7 +141,8 @@ export class Consultations {
       const result = failure(error, usage, requestedSession, usageComplete);
       if (diagnosticsEnabled) result.error.diagnostics = {
         phase,
-        category: terminalCategory ?? (error instanceof AdvisorError ? 'advisor-error' : phase === 'completion' ? completionCategory(error) : 'local-error'),
+        category: error instanceof AdvisorError ? 'advisor-error' : phase === 'completion' ? completionCategory(error) : 'local-error',
+        ...terminalHint,
         ...(diagnosticModel ? { model: { ...diagnosticModel }, selectionSource } : {})
       };
       return { ...result, ...(existing ? totals(existing, existing.pending !== controller && Boolean(existing.pending)) : {}) };

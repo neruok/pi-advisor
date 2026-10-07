@@ -5,7 +5,7 @@ import { dependencies, reply, deferred, waitFor } from './helpers.mjs';
 
 const text = c => JSON.stringify(c.messages);
 
-test('AC-1 isolated starts and continuations pin the selected model', async () => {
+test('AC-1 AC-25 isolated starts and continuations pin the selected model without toolChoice', async () => {
   const manager = new Consultations(), deps = dependencies();
   const a = await manager.send({ message: 'FIRST_PROBLEM' }, deps);
   assert.equal(a.ok, true, 'starting must produce a consultation');
@@ -18,7 +18,7 @@ test('AC-1 isolated starts and continuations pin the selected model', async () =
   assert.equal(deps.requests[2].context.messages.length, 4);
   assert.match(text(deps.requests[2].context), /FIRST_PROBLEM/);
   assert.doesNotMatch(text(deps.requests[2].context), /SECOND_PROBLEM/);
-  for (const r of deps.requests) { assert.deepEqual(r.context.messages[0].toolsAdded, []); assert.equal(r.options.toolChoice, 'none'); assert.equal(r.options.maxRetries, 0); assert.equal(r.options.maxTokens, 4096); assert.notEqual(r.options.sessionId, 'PARENT_SESSION'); }
+  for (const r of deps.requests) { assert.deepEqual(r.context.messages[0].toolsAdded, []); assert.equal(Object.hasOwn(r.options, 'toolChoice'), false); assert.equal(r.options.maxRetries, 0); assert.equal(r.options.maxTokens, 4096); assert.notEqual(r.options.sessionId, 'PARENT_SESSION'); }
 });
 
 test('AC-2 AC-17 text completion validation does not expose thinking', async () => {
