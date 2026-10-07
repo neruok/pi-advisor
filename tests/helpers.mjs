@@ -1,6 +1,6 @@
 export const usage = { input: 10, output: 2, cacheRead: 1, cacheWrite: 0, totalTokens: 13, cost: { input: .01, output: .002, cacheRead: .001, cacheWrite: 0, total: .013 } };
 export const model = { provider: 'mock', model: 'chat' };
-export function reply(text = 'Investigate the missing evidence.\n[CONTINUE]', patch = {}) {
+export function reply(text = 'Investigate the missing evidence.', patch = {}) {
   return { role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop', usage, api: 'mock-api', provider: 'mock', model: 'chat', timestamp: 1, ...patch };
 }
 export function dependencies(complete = async () => reply()) {

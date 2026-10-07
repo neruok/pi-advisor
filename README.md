@@ -43,7 +43,17 @@ Start:
 { "message": "Objective: fix the timeout. My understanding: workers wait for a queue signal. Evidence: the queue contains work, but no worker wakes. Constraint: preserve shutdown behavior. Uncertainty: signal loss or lock contention? What should I test?" }
 ```
 
-`advisor` returns a session identifier, response, status, committed exchange count, pinned model, per-call usage, and cumulative usage.
+`advisor` returns a session identifier, free-form response, committed exchange count, pinned model, per-call usage, and cumulative usage.
+The extension constructs the structured result envelope. It does not require the model to produce JSON, markers, or a status label, and it does not interpret the advice.
+
+`usageComplete` describes this call's reported usage. `totalUsageComplete` describes the known consultation total.
+These flags describe local reporting, not verified provider billing. A completed rejected reply still reports its usage.
+An unobserved completion makes cumulative usage incomplete for the rest of that consultation, even after later successes.
+Failures include cumulative usage when the requested consultation still exists. The host receives per-call usage only.
+
+The collapsed TUI result shows replies of at most eight wrapped advice rows in full. Longer replies show the first eight advice rows and an expansion hint. Expand for full advice, model, and cumulative usage details. The cutoff uses the current terminal width, with no character-count cap. The advisory label and reported usage remain visible in both views.
+Responses stay in the existing tool result. No duplicate chat messages or new model requests are added when you expand.
+Pending updates show preparation or waiting only. They never show partial advice, thinking, or the explicit input.
 
 Continue through `advisor`:
 
@@ -53,7 +63,11 @@ Continue through `advisor`:
 
 `advisor_sessions({})` lists identifiers and metadata, not transcripts. Finish with `advisor_close({"session":"adv_<returned-id>"})`.
 
-Statuses are `continue`, `actionable`, `approval_needed`, or `exhausted`. None automatically closes a consultation or executes advice.
+Each entry includes known cumulative usage, `totalUsageComplete`, `turnsRemaining`, `historyBytes`, and `historyBytesRemaining`.
+Capacity counts committed exchanges only. A pending request marks cumulative usage incomplete until its outcome is known.
+Byte capacity is not a token estimate or a guarantee that another exchange will fit.
+
+Success results and session metadata have no status classification. Advice never automatically closes a consultation or executes an action.
 
 The main agent must gather requested evidence and verify factual claims. Advice is not evidence or authorization. Ask the user when an action requires approval.
 
@@ -73,13 +87,48 @@ Hard local limits:
 
 Each request asks for at most 4096 output tokens. Byte limits do not guarantee fit within every model's token context. Provider calls may incur charges, including replies rejected by validation. No monetary cap is enforced.
 
-Limits fail closed. The extension never evicts or silently summarizes history. Close unused sessions or start a new consultation with your own explicit summary.
+Limits fail closed. The extension never evicts or silently summarizes history.
+Limit failures retain `error.code = "limit-exceeded"` and add `error.limit = {resource, maximum, actual}`.
+Measurements use UTF-8 bytes or attempted exchange/session counts. Bounds are inclusive.
 
-One request may run per consultation. Overlapping requests and busy close return `busy`. Cancellation and provider failure leave previous exchanges intact. The extension makes no automatic retries. A provider that ignores cancellation can complete later, but its reply cannot change consultation state. Late usage may be unavailable.
+| Resource | Recovery |
+| --- | --- |
+| `input-bytes` | Send a shorter message. |
+| `reply-bytes` | Request a shorter answer. |
+| `history-bytes` or `turns` | Start a new consultation with your own explicit summary. |
+| `sessions` | Close idle consultations. |
 
-Replies must end with exactly one final protocol marker. Missing markers, incomplete replies, or tool calls fail with `invalid-response`. Errors omit raw provider messages.
+One request may run per consultation. Overlapping requests and busy close return `busy`. Cancellation and provider failure leave previous exchanges intact. The extension makes no automatic retries. A provider that ignores cancellation can complete later, but its reply cannot change consultation state. Late usage may be unavailable. If a completion attempt produces no observed response, `usageComplete` is false.
+A zero usage value with that flag does not mean zero cost. Remote work can continue after local cancellation.
+An unavailable model during a completion attempt can also produce incomplete usage. The extension does not infer remote billing from an exception.
+
+Replies must contain nonblank text and finish normally. Empty replies, incomplete completions, malformed content, or tool calls fail with `invalid-response`.
+The fixed error message identifies abnormal completion, malformed content, or absent text. Thinking blocks are removed; text blocks are joined with a newline without trimming or parsing their contents. Marker-looking strings are ordinary text.
+It does not expose rejected advice, thinking, provider field values, or raw provider messages. A failed exchange never enters history.
+Keep the rejection message when reporting a live failure. Stop rather than retry or relax validation. Earlier generic errors cannot reveal the exact violation after the reply is discarded.
 
 Settings locks coordinate participating writers. An unrelated writer can still race between the final byte comparison and replacement. Parent-directory races and provider code remain outside an operating-system sandbox.
+
+## Opt-in live verification
+
+Offline checks remain provider-free. Use this manual procedure only when a user requests a live compatibility check.
+It checks one consultation and one continuation, not reasoning quality or universal provider support.
+
+1. Get separate spending authorization for a designated physical model and at most two requests.
+2. Disclose that the extension has no local monetary cap. Use a provider-side budget if a hard spending cap is required.
+3. Record the provider/model and Pi and Node versions. Use normal authentication. Do not copy credentials into the report.
+4. Use `/advisor show` to check the effective model. Select the designated model only with authorization for that settings change.
+5. Ask the main agent to call `advisor` with nonsecret text: "Recommend one offline check for a pure integer addition function."
+6. Check success, `advisory: true`, the free-form response, returned session identifier, model, `usage`, `usageComplete`, and `totalUsageComplete`.
+7. Continue that session: "I have not run the proposed check. Suggest one boundary case for that function."
+8. Check that the model remains pinned, turns equals two, and reported cumulative usage includes both calls.
+9. Close the idle session with `advisor_close`. Confirm that `advisor_sessions` no longer lists it.
+10. Report versions, provider/model, outcomes, reported usage, completeness, and whether the session closed.
+
+Use no automatic retries. Stop after any failure, including an invalid reply. Close any existing idle consultation before reporting.
+Do not spend a replacement request on a failed call. Do not try to induce malformed replies with paid requests.
+If cleanup reports busy, inspect the pending state before another action. Do not claim that local abort stops remote billing.
+Never describe an offline pass as live provider interoperability.
 
 ## Development
 

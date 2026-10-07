@@ -6,9 +6,11 @@ import { MAIN_GUIDANCE } from './lib/prompt.ts';
 import { AdviceSchema, InputSchema, EmptyInputSchema, CloseInputSchema, ListSchema, CloseSchema } from './lib/schemas.ts';
 import { loadSettings, settingsPaths } from './lib/settings.ts';
 import { registerSettingsCommand, resolveModel } from './lib/settings-command.ts';
+import { toolRenderers } from './lib/render.ts';
 
-function dependencies(ctx: ExtensionToolContext): Dependencies {
+function dependencies(ctx: ExtensionToolContext, progress?: Dependencies['progress']): Dependencies {
   return {
+    progress,
     async prepare() {
       const pair = (await loadSettings(settingsPaths(ctx.cwd, getAgentDir()), ctx.isProjectTrusted())).settings.model;
       if (!pair) throw new AdvisorError('not-configured');
@@ -36,12 +38,17 @@ export default function advisor(pi: ExtensionAPI): void {
     description: 'Consult an isolated, tool-free advisor. Explain your problem, evidence and uncertainty. Omit session to start, or supply it to continue. Advice is not evidence or authorization. No automatic workspace or parent context access. Explicit host-configured model required. Provider calls may incur charges.',
     promptGuidelines: MAIN_GUIDANCE, parameters: InputSchema, outputSchema: AdviceSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    async execute(_id, args, signal, _update, ctx) { return result(await consultations.send(args, dependencies(ctx), signal ?? ctx.signal)); }
+    ...toolRenderers('advisor'),
+    async execute(_id, args, signal, update, ctx) {
+      const deps = dependencies(ctx, phase => update?.({ content: [{ type: 'text', text: `Advisor: ${phase}` }], details: { phase } }));
+      return result(await consultations.send(args, deps, signal ?? ctx.signal));
+    }
   });
   pi.registerTool({
     name: 'advisor_sessions', label: 'Advisor sessions', exposure: 'model-only',
     description: 'List active ephemeral advisor sessions and metadata, without full transcripts. Recover the identifier for the same issue.',
     parameters: EmptyInputSchema, outputSchema: ListSchema,
+    ...toolRenderers('advisor_sessions'),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async execute(_id, args) {
       let data: { ok: true; sessions: Metadata[] } | Failure;
@@ -54,6 +61,7 @@ export default function advisor(pi: ExtensionAPI): void {
     name: 'advisor_close', label: 'Close advisor session', exposure: 'model-only',
     description: 'Close an idle advisor consultation and release its history. Busy or unknown sessions return errors. Closing does not erase the parent Pi transcript.',
     parameters: CloseInputSchema, outputSchema: CloseSchema,
+    ...toolRenderers('advisor_close'),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async execute(_id, args) {
       try { object(args, ['session'], 'invalid-argument'); if (typeof args.session !== 'string' || !args.session.trim()) throw new AdvisorError('invalid-argument'); return result(consultations.close(args.session)); }

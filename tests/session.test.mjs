@@ -21,20 +21,17 @@ test('AC-1 isolated starts and continuations pin the selected model', async () =
   for (const r of deps.requests) { assert.deepEqual(r.context.messages[0].toolsAdded, []); assert.equal(r.options.toolChoice, 'none'); assert.equal(r.options.maxRetries, 0); assert.equal(r.options.maxTokens, 4096); assert.notEqual(r.options.sessionId, 'PARENT_SESSION'); }
 });
 
-test('AC-2 reply protocol validates markers and does not expose thinking', async () => {
+test('AC-2 AC-17 text completion validation does not expose thinking', async () => {
   const manager = new Consultations();
-  const map = { CONTINUE: 'continue', ACTIONABLE: 'actionable', APPROVAL_NEEDED: 'approval_needed', EXHAUSTED: 'exhausted' };
-  for (const [marker, status] of Object.entries(map)) {
-    const deps = dependencies(async () => reply('Advice.\n[' + marker + ']', { content: [{ type: 'thinking', thinking: 'PRIVATE_REASONING' }, { type: 'text', text: 'Advice.\n[' + marker + ']' }] }));
-    const r = await manager.send({ message: 'Explain' }, deps);
-    assert.equal(r.ok, true, 'valid marker must succeed'); assert.equal(r.status, status); assert.equal(r.response, 'Advice.'); assert.doesNotMatch(JSON.stringify(r), /PRIVATE_REASONING/);
-    assert.equal((await manager.send({ session: r.session, message: 'Another fact' }, dependencies())).ok, true);
-  }
-  for (const content of ['No marker', '[CONTINUE]', 'Advice\n[UNKNOWN]', 'Advice\n[CONTINUE]\nmore', 'Advice\n[CONTINUE]\n[EXHAUSTED]', 'Advice\n[UNKNOWN]\n[CONTINUE]']) {
+  const deps = dependencies(async () => reply(undefined, { content: [{ type: 'thinking', thinking: 'PRIVATE_REASONING' }, { type: 'text', text: 'Advice.' }] }));
+  const r = await manager.send({ message: 'Explain' }, deps);
+  assert.equal(r.ok, true); assert.equal(r.response, 'Advice.'); assert.doesNotMatch(JSON.stringify(r), /PRIVATE_REASONING/);
+  assert.equal((await manager.send({ session: r.session, message: 'Another fact' }, dependencies())).ok, true);
+  for (const content of ['', ' \n\t ']) {
     const r = await manager.send({ message: 'Q' }, dependencies(async () => reply(content)));
     assert.equal(r.error.code, 'invalid-response');
   }
-  for (const patch of [{ stopReason: 'length' }, { stopReason: 'toolUse', content: [{ type: 'toolCall', name: 'read', arguments: {} }] }, { content: [{ type: 'image', data: 'x' }] }]) {
+  for (const patch of [{ stopReason: 'length' }, { stopReason: 'toolUse', content: [{ type: 'toolCall', name: 'read', arguments: {} }] }, { content: [{ type: 'image', data: 'x' }] }, { content: [{ type: 'thinking', thinking: 'PRIVATE_REASONING' }] }]) {
     assert.equal((await manager.send({ message: 'Q' }, dependencies(async () => reply(undefined, patch)))).error.code, 'invalid-response');
   }
   const prompt = dependencies(); await manager.send({ message: 'Q' }, prompt);
