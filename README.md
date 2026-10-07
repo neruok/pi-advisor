@@ -104,6 +104,16 @@ Success results and session metadata have no status classification. Advice never
 
 The main agent must gather requested evidence and verify factual claims. Advice is not evidence or authorization. Ask the user when an action requires approval.
 
+## Opt-in failure diagnostics
+
+For a requested call, add `"diagnostics": true` to the `advisor` input. Omission or `false` keeps the existing failure envelope. This option does not start another call or enable retries. Success results are unchanged.
+
+Failures add `error.diagnostics` with a fixed `phase` and `category`. Phases are `validation`, `preparation`, `completion`, `response-validation`, and `commit`. When known, diagnostics include the effective or pinned `model` (including reasoning) and `selectionSource`: `global`, `project`, or `unknown`. Continuations retain the original selection source, even after settings change. If preparation fails before settings resolve, model metadata is absent.
+
+Categories distinguish `local-error`, `provider-error` (terminal error response), `provider-aborted` (terminal abort response), and `advisor-error` (an extension-defined failure). Thrown completion errors can report `authentication`, `provider-rejection`, `rate-limit`, or `transport` from recognized own data fields: HTTP `status` 401/403, 400/404/409/413/422, 429, or 408/500/502/503/504 respectively; transport `code` values ECONNRESET, ECONNREFUSED, ETIMEDOUT, ENOTFOUND, and EAI_AGAIN also map to `transport`. HTTP status takes precedence. Other completion exceptions report `unknown`.
+
+These are diagnostic hints, not proof of a root cause. Terminal responses in Pi can supply only a free-form error message; the extension does not parse or expose it. Credentials, headers, raw errors, causes, arbitrary payloads, rejected advice, and thinking remain excluded. Diagnostic fields appear in the tool result and can persist in the parent transcript. Zero reported usage still does not establish zero billing. Stop after a failed live call; enabling diagnostics is not permission to retry.
+
 ## Limits and retention
 
 Consultations are ephemeral. The extension stores no separate consultation files and does not restore history after restart or reload.

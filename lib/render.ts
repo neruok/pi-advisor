@@ -41,6 +41,11 @@ function resultLines(kind: Kind, data: Data | undefined, options: ToolRenderResu
   if (!data.ok) {
     const lines = [theme.fg('error', safe(`${label(data.error.code)}: ${value(data.error.message)}`))];
     if (data.error.limit) lines.push(theme.fg('muted', safe(`${data.error.limit.resource}: ${data.error.limit.actual} / ${data.error.limit.maximum}`)));
+    if (data.error.diagnostics) {
+      const diagnostic = data.error.diagnostics;
+      lines.push(theme.fg('muted', safe(`Failure phase: ${label(diagnostic.phase)} • category: ${label(diagnostic.category)}`)));
+      if (diagnostic.model) lines.push(theme.fg('muted', safe(`${label(diagnostic.model.provider)}/${label(diagnostic.model.model)} • ${label(diagnostic.selectionSource)} • reasoning: ${label(diagnostic.model.reasoning ?? 'default')}`)));
+    }
     lines.push(theme.fg('muted', usageLine(data.usage, data.usageComplete)));
     if (options.expanded && data.totalUsage) lines.push(theme.fg('muted', `Consultation total: ${usageLine(data.totalUsage, data.totalUsageComplete)}`));
     return lines.flatMap(line => wrapTextWithAnsi(line, width));

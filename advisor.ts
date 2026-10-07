@@ -11,9 +11,11 @@ import { toolRenderers } from './lib/render.ts';
 function dependencies(ctx: ExtensionToolContext, progress?: Dependencies['progress']): Dependencies {
   return {
     progress,
-    async prepare() {
-      const pair = (await loadSettings(settingsPaths(ctx.cwd, getAgentDir()), ctx.isProjectTrusted())).settings.model;
+    async prepare(reportSelection) {
+      const loaded = await loadSettings(settingsPaths(ctx.cwd, getAgentDir()), ctx.isProjectTrusted());
+      const pair = loaded.settings.model;
       if (!pair) throw new AdvisorError('not-configured');
+      reportSelection?.(pair, loaded.source ?? 'unknown');
       resolveModel(ctx, pair, true);
       return pair;
     },

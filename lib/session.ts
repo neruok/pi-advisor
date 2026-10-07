@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { AssistantMessage, ModelsSimpleStreamOptions, Context, Usage } from '@earendil-works/pi-ai';
 import { ADVISOR_PROMPT } from './prompt.ts';
-import { AdvisorError, LIMITS, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, type Failure, type Selection, type UsageTotals } from './protocol.ts';
+import { AdvisorError, LIMITS, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, completionCategory, type Diagnostics, type Failure, type Selection, type SelectionSource, type UsageTotals } from './protocol.ts';
 
 type Exchange = { role: 'user' | 'assistant'; text: string };
-type Session = { id: string; label: string; model?: Selection; history: Exchange[]; usage: Usage; totalUsageComplete: boolean; pending?: AbortController };
+type Session = { id: string; label: string; model?: Selection; selectionSource?: SelectionSource; history: Exchange[]; usage: Usage; totalUsageComplete: boolean; pending?: AbortController };
 export type Phase = 'preparing' | 'waiting';
 export type Dependencies = {
-  prepare: () => Promise<Selection>;
+  prepare: (reportSelection?: (model: Selection, source: SelectionSource) => void) => Promise<Selection>;
   complete: (model: Selection, context: Context, options: ModelsSimpleStreamOptions) => Promise<AssistantMessage>;
   progress?: (phase: Phase) => void;
 };
@@ -71,11 +71,18 @@ export class Consultations {
     let relay: (() => void) | undefined;
     let usage = zeroUsage();
     let usageComplete = true;
+    const diagnosticsEnabled = Boolean(value && typeof value === 'object' && 'diagnostics' in value && value.diagnostics === true);
+    let phase: Diagnostics['phase'] = 'validation';
+    let terminalCategory: Diagnostics['category'] | undefined;
+    let diagnosticModel: Selection | undefined;
+    let selectionSource: SelectionSource = 'unknown';
     const started = performance.now();
     try {
       input = parseInput(value);
       if (signal?.aborted) throw new AdvisorError('cancelled');
       session = this.reserve(input);
+      diagnosticModel = session.model ? { ...session.model } : undefined;
+      selectionSource = session.selectionSource ?? 'unknown';
       controller = new AbortController();
       session.pending = controller;
       relay = () => controller!.abort(new AdvisorError('cancelled'));
@@ -84,14 +91,21 @@ export class Consultations {
       const pending: Exchange[] = [...session.history, { role: 'user', text: input.message }];
       checkLimit('turns', this.limits.turns, session.history.length / 2 + 1);
       checkLimit('history-bytes', this.limits.historyBytes, size(pending));
+      phase = 'preparation';
       const selected = session.model ?? await interruptible(() => {
         progress(deps, 'preparing');
         if (controller!.signal.aborted) throw controller!.signal.reason;
-        return deps.prepare();
+        return deps.prepare((model, source) => {
+          // A late preparation must not mutate pinned state or the returned diagnostics.
+          if (!controller!.signal.aborted) { diagnosticModel = { ...model }; selectionSource = source; }
+        });
       }, controller.signal);
       const model = { ...selected };
       // Pin before awaiting model work. Reserving the map slot bounds concurrent creation.
       session.model = model;
+      session.selectionSource = selectionSource;
+      diagnosticModel = { ...model };
+      phase = 'completion';
       const reply = await interruptible(() => {
         progress(deps, 'waiting');
         if (controller!.signal.aborted) throw controller!.signal.reason;
@@ -102,11 +116,15 @@ export class Consultations {
           ...(model.reasoning && model.reasoning !== 'default' && model.reasoning !== 'off' ? { reasoning: model.reasoning } : {})
         });
       }, controller.signal);
+      phase = 'response-validation';
+      if (reply.stopReason === 'error') terminalCategory = 'provider-error';
+      if (reply.stopReason === 'aborted') terminalCategory = 'provider-aborted';
       usage = addUsage(usage, reply.usage);
       usageComplete = true;
       const response = replyText(reply);
       const next: Exchange[] = [...pending, { role: 'assistant', text: response }];
       checkLimit('history-bytes', this.limits.historyBytes, size(next));
+      phase = 'commit';
       if (controller.signal.aborted || this.sessions.get(session.id) !== session) throw new AdvisorError('cancelled');
       if (performance.now() - started >= this.limits.timeoutMs) throw new AdvisorError('timeout');
       session.history = next;
@@ -120,7 +138,13 @@ export class Consultations {
         session.totalUsageComplete &&= usageComplete;
       }
       const existing = requestedSession ? this.sessions.get(requestedSession) : undefined;
-      return { ...failure(error, usage, requestedSession, usageComplete), ...(existing ? totals(existing, existing.pending !== controller && Boolean(existing.pending)) : {}) };
+      const result = failure(error, usage, requestedSession, usageComplete);
+      if (diagnosticsEnabled) result.error.diagnostics = {
+        phase,
+        category: terminalCategory ?? (error instanceof AdvisorError ? 'advisor-error' : phase === 'completion' ? completionCategory(error) : 'local-error'),
+        ...(diagnosticModel ? { model: { ...diagnosticModel }, selectionSource } : {})
+      };
+      return { ...result, ...(existing ? totals(existing, existing.pending !== controller && Boolean(existing.pending)) : {}) };
     } finally {
       if (timer) clearTimeout(timer);
       if (relay) signal?.removeEventListener('abort', relay);

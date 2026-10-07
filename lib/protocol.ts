@@ -55,8 +55,26 @@ export function addUsage(a: Usage, b: Usage): Usage {
   for (const key of ['reasoning', 'cacheWrite1h'] as const) if (a[key] !== undefined || b[key] !== undefined) result[key] = (a[key] ?? 0) + (b[key] ?? 0);
   return result;
 }
+export const FAILURE_PHASES = ['validation', 'preparation', 'completion', 'response-validation', 'commit'] as const;
+export const FAILURE_CATEGORIES = ['advisor-error', 'local-error', 'unknown', 'provider-error', 'provider-aborted', 'authentication', 'provider-rejection', 'rate-limit', 'transport'] as const;
+export type SelectionSource = 'global' | 'project' | 'unknown';
+export type Diagnostics = { phase: typeof FAILURE_PHASES[number]; category: typeof FAILURE_CATEGORIES[number]; model?: Selection; selectionSource?: SelectionSource };
+// Only recognized structured fields are used. Never inspect messages, causes, headers or payloads.
+export function completionCategory(error: unknown): Diagnostics['category'] {
+  try {
+    if (!error || typeof error !== 'object') return 'unknown';
+    const status = Object.getOwnPropertyDescriptor(error, 'status')?.value;
+    if (status === 401 || status === 403) return 'authentication';
+    if (status === 429) return 'rate-limit';
+    if ([400, 404, 409, 413, 422].includes(status)) return 'provider-rejection';
+    if ([408, 500, 502, 503, 504].includes(status)) return 'transport';
+    const code = Object.getOwnPropertyDescriptor(error, 'code')?.value;
+    if (['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)) return 'transport';
+  } catch { /* Unknown diagnostic metadata must not replace the original failure. */ }
+  return 'unknown';
+}
 export type UsageTotals = { totalUsage: Usage; totalUsageComplete: boolean };
-export type Failure = { ok: false; error: { code: ErrorCode; message: string; limit?: LimitDetails }; usage: Usage; usageComplete: boolean; session?: string } & Partial<UsageTotals>;
+export type Failure = { ok: false; error: { code: ErrorCode; message: string; limit?: LimitDetails; diagnostics?: Diagnostics }; usage: Usage; usageComplete: boolean; session?: string } & Partial<UsageTotals>;
 export function failure(error: unknown, usage = zeroUsage(), session?: string, usageComplete = true): Failure {
   const safe = error instanceof AdvisorError ? error : new AdvisorError('provider-failed');
   return { ok: false, error: { code: safe.code, message: safe.message, ...(safe.limit ? { limit: { ...safe.limit } } : {}) }, usage, usageComplete, ...(session === undefined ? {} : { session }) };
@@ -71,11 +89,12 @@ export function parseSelection(value: unknown): Selection {
   if (pair.reasoning !== undefined && !REASONING_LEVELS.includes(pair.reasoning as Reasoning)) throw new AdvisorError('invalid-config');
   return { provider: pair.provider as string, model: pair.model as string, ...(pair.reasoning === undefined ? {} : { reasoning: pair.reasoning as Reasoning }) };
 }
-export function parseInput(value: unknown): { message: string; session?: string } {
-  const input = object(value, ['message', 'session'], 'invalid-argument');
+export function parseInput(value: unknown): { message: string; session?: string; diagnostics?: boolean } {
+  const input = object(value, ['message', 'session', 'diagnostics'], 'invalid-argument');
+  if (input.diagnostics !== undefined && typeof input.diagnostics !== 'boolean') throw new AdvisorError('invalid-argument');
   if (typeof input.message !== 'string' || !input.message.trim() || (input.session !== undefined && (typeof input.session !== 'string' || !input.session.trim()))) throw new AdvisorError('invalid-argument');
   checkLimit('input-bytes', LIMITS.messageBytes, Buffer.byteLength(input.message));
-  return { message: input.message, ...(input.session === undefined ? {} : { session: input.session as string }) };
+  return { message: input.message, ...(input.session === undefined ? {} : { session: input.session as string }), ...(input.diagnostics === undefined ? {} : { diagnostics: input.diagnostics as boolean }) };
 }
 export function replyText(message: AssistantMessage): string {
   if (message.stopReason === 'error' || message.stopReason === 'aborted') throw new AdvisorError('provider-failed');
