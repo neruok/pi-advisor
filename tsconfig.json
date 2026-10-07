@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "module": "nodenext", "moduleResolution": "nodenext", "target": "esnext",
+    "strict": true, "noEmit": true, "allowImportingTsExtensions": true,
+    "skipLibCheck": true, "types": ["node"]
+  },
+  "include": ["advisor.ts", "lib/**/*.ts"]
+}

@@ -1,0 +1,13 @@
+import { Type } from 'typebox';
+const text = Type.String({ minLength: 1 });
+const object = { additionalProperties: false };
+export const ModelSchema = Type.Object({ provider: text, model: text }, object);
+export const UsageSchema = Type.Object({ input: Type.Number(), output: Type.Number(), cacheRead: Type.Number(), cacheWrite: Type.Number(), totalTokens: Type.Number(), reasoning: Type.Optional(Type.Number()), cacheWrite1h: Type.Optional(Type.Number()), cost: Type.Object({ input: Type.Number(), output: Type.Number(), cacheRead: Type.Number(), cacheWrite: Type.Number(), total: Type.Number() }, object) }, object);
+export const StatusSchema = Type.Union(['continue', 'actionable', 'approval_needed', 'exhausted'].map(s => Type.Literal(s)));
+export const FailureSchema = Type.Object({ ok: Type.Literal(false), error: Type.Object({ code: text, message: text }, object), usage: UsageSchema, session: Type.Optional(text) }, object);
+export const InputSchema = Type.Object({ message: text, session: Type.Optional(text) }, object);
+export const CloseInputSchema = Type.Object({ session: text }, object);
+export const EmptyInputSchema = Type.Object({}, object);
+export const AdviceSchema = Type.Union([Type.Object({ ok: Type.Literal(true), advisory: Type.Literal(true), session: text, response: text, status: StatusSchema, turns: Type.Integer({ minimum: 1, maximum: 24 }), model: ModelSchema, usage: UsageSchema, totalUsage: UsageSchema }, object), FailureSchema]);
+export const ListSchema = Type.Union([Type.Object({ ok: Type.Literal(true), sessions: Type.Array(Type.Object({ session: text, label: text, turns: Type.Integer({ minimum: 0, maximum: 24 }), status: StatusSchema, model: ModelSchema, busy: Type.Boolean() }, object), { maxItems: 8 }) }, object), FailureSchema]);
+export const CloseSchema = Type.Union([Type.Object({ ok: Type.Literal(true), session: text }, object), FailureSchema]);
