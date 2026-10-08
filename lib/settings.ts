@@ -3,7 +3,9 @@ import { lstat, open, mkdir, rename, link, unlink, type FileHandle } from 'node:
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { withFileMutationQueue } from '@earendil-works/pi-coding-agent';
-import { AdvisorError, LIMITS, object, parseSelection, parseTimeoutMs, type Selection } from './protocol.ts';
+import { AdvisorError, object, parseSelection, parseTimeoutMs, type Selection } from './protocol.ts';
+
+const MAX_SETTINGS_BYTES = 16384;
 
 export type Settings = { model?: Selection; timeoutMs?: number };
 export type Scope = 'global' | 'project';
@@ -32,15 +34,15 @@ async function readLayer(path: string): Promise<{ settings: Settings; raw?: Buff
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = await handle.stat();
     if (!opened.isFile()) throw new AdvisorError('settings-unavailable');
-    if (opened.size > LIMITS.messageBytes) throw new AdvisorError('invalid-config');
-    const buffer = Buffer.alloc(LIMITS.messageBytes + 1);
+    if (opened.size > MAX_SETTINGS_BYTES) throw new AdvisorError('invalid-config');
+    const buffer = Buffer.alloc(MAX_SETTINGS_BYTES + 1);
     let length = 0;
     while (length < buffer.length) {
       const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
       if (!bytesRead) break;
       length += bytesRead;
     }
-    if (length > LIMITS.messageBytes) throw new AdvisorError('invalid-config');
+    if (length > MAX_SETTINGS_BYTES) throw new AdvisorError('invalid-config');
     const raw = buffer.subarray(0, length);
     try { return { settings: parseSettings(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw))), raw }; }
     catch { throw new AdvisorError('invalid-config'); }
@@ -73,7 +75,7 @@ export async function saveSettings(paths: SettingsPaths, scope: Scope, value: un
         // Preserve the independent field from the locked checkpoint, not a prior command read.
         const next = { ...(preserve ? { [preserve]: before.settings[preserve] } : {}), ...settings };
         const text = JSON.stringify(next, null, 2) + '\n';
-        if (Buffer.byteLength(text) > LIMITS.messageBytes) throw new AdvisorError('invalid-config');
+        if (Buffer.byteLength(text) > MAX_SETTINGS_BYTES) throw new AdvisorError('invalid-config');
         const output = await open(temp, 'wx', 0o600); ownedTemp = true;
         try { await output.writeFile(text, 'utf8'); await output.sync(); } finally { await output.close(); }
         const current = await readLayer(path);

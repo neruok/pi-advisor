@@ -164,7 +164,8 @@ Continue through `advisor`:
 
 `advisor_sessions({})` lists identifiers and metadata, not transcripts. Finish with `advisor_close({"session":"adv_<returned-id>"})`.
 
-Each entry includes known cumulative usage, `totalUsageComplete`, `turnsRemaining`, informational `historyBytes`, and `contextUsage`.
+Each entry includes committed exchange count, known cumulative usage, `totalUsageComplete`, informational `historyBytes`, and `contextUsage`.
+Both discovery views show every listed consultation and its committed exchange count.
 `contextUsage` contains `tokens`, `contextWindow`, and `percent`, based on committed history only.
 A pending request marks cumulative usage incomplete until its outcome is known. Estimates do not guarantee another exchange will fit.
 
@@ -216,17 +217,22 @@ Consultations are ephemeral. The extension stores no separate consultation files
 
 Session replacement, fork, tree navigation, shutdown, or reload clears consultations. Parent compaction retains them. Pi can still persist tool arguments and results in its parent transcript. Closing a consultation does not erase that transcript. The provider receives the supplied messages and applies its own retention policy. Do not include secrets.
 
-Hard local limits:
+Advisor has no fixed consultation count, exchange count, message-byte, or reply-byte caps.
+There is no fixed history-byte cap. More consultations and longer exchanges can use more process memory and increase provider cost.
+Close consultations when you no longer need them.
 
-- 8 active consultations, including pending creation.
-- 24 successful user/reply exchange pairs per consultation.
-- 16384 UTF-8 bytes per user message or raw advisor reply.
-- The pinned advisor model's `contextWindow`, from Pi's model registry. There is no fixed history-byte cap.
+The remaining consultation limits are:
+
+- The pinned advisor model's `contextWindow`, from Pi's model registry.
 - A configured deadline per call, with a 300000 ms default.
 
-Each request asks for at most 4096 output tokens.
-Before dispatch, advisor reserves those 4096 output tokens within the model window. Equality passes; overflow returns `context-tokens`.
-After validation, the full pair must also fit before commit. No automatic compaction, trimming, or summarization occurs.
+Advisor omits `maxTokens` and lets Pi control the model output allowance.
+Pi applies model defaults and provider-specific context handling. Removing the extension cap does not remove provider output limits.
+Before dispatch, estimated pending context must fit within the model window, with no fixed output reserve.
+After validation, the full pair must also fit before commit. Equality passes both checks. Overflow returns `context-tokens`.
+No automatic compaction, trimming, or summarization occurs.
+
+The settings-file limit remains 16384 bytes. Label lengths, model-picker rows, and eight-row advice previews remain unchanged.
 
 Context measurement follows Pi: use the latest positive assistant usage plus Pi's estimates for later messages.
 With no positive usage, estimate the fixed system prompt and messages with Pi's public `estimateTokens` helper.
@@ -238,14 +244,8 @@ Requests declare no tools and omit `toolChoice` for every provider. Pi controls 
 
 Limits fail closed. The extension never evicts or silently summarizes history.
 Limit failures retain `error.code = "limit-exceeded"` and add `error.limit = {resource, maximum, actual}`.
-Measurements use UTF-8 bytes, estimated context tokens, or attempted exchange/session counts. Bounds are inclusive.
-
-| Resource | Recovery |
-| --- | --- |
-| `input-bytes` | Send a shorter message. |
-| `reply-bytes` | Request a shorter answer. |
-| `context-tokens` or `turns` | Start a new consultation with your own explicit summary. |
-| `sessions` | Close idle consultations. |
+`context-tokens` is the only limit resource. Measurements use estimated context tokens. Bounds are inclusive.
+To recover from context overflow, start a new consultation with your own explicit summary.
 
 One request may run per consultation. Overlapping requests and busy close return `busy`. Cancellation and provider failure leave previous exchanges intact. The extension makes no automatic retries. A provider that ignores cancellation can complete later, but its reply cannot change consultation state. Late usage may be unavailable. If a completion attempt produces no observed response, `usageComplete` is false.
 A zero usage value with that flag does not mean zero cost. Remote work can continue after local cancellation.
@@ -295,7 +295,7 @@ Verified against Pi 1.0.4 on Node 24, on Linux. Offline tests verify determinist
 
 ## Release checklist
 
-The initial release is `@neruok/pi-advisor@0.1.0`, licensed under MIT. The manifest selects public access on the npm registry.
+The release version is `@neruok/pi-advisor@0.1.1`, licensed under MIT. The manifest selects public access on the npm registry.
 
 1. Confirm the release version and regenerate `package-lock.json` after manifest changes with `npm install --package-lock-only --ignore-scripts`.
 2. Run `npm ci --ignore-scripts`, `npm run verify`, `npm run packcheck`, and `npm publish --dry-run`. The `prepublishOnly` hook runs verification and the archive check again.

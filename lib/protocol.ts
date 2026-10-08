@@ -1,7 +1,7 @@
 import type { AssistantMessage, Usage } from '@earendil-works/pi-ai';
 import type { ContextUsage } from './context.ts';
 
-export const LIMITS = Object.freeze({ sessions: 8, turns: 24, messageBytes: 16384, replyBytes: 16384, timeoutMs: 300000, maxTokens: 4096 });
+export const LIMITS = Object.freeze({ timeoutMs: 300000 });
 export const MAX_TIMEOUT_MS = 2147483647;
 export const REASONING_LEVELS = ['default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Reasoning = typeof REASONING_LEVELS[number];
@@ -11,7 +11,7 @@ const ERRORS: Record<ErrorCode, string> = {
   'invalid-argument': 'Use a nonblank message and an existing session identifier, if supplied.',
   'not-found': 'Consultation not found. It may have closed or its parent session may have changed.',
   busy: 'Consultation has a pending request. Wait for it before sending or closing.',
-  'limit-exceeded': 'Consultation limit exceeded. Close unused sessions or start a new consultation with an explicit summary.',
+  'limit-exceeded': 'Advisor context limit exceeded. Start a new consultation with an explicit summary.',
   'not-configured': 'No advisor model configured. Use /advisor model <provider> <model>.',
   'invalid-config': 'Advisor settings must be strict JSON with an optional model selection and integer timeoutMs.',
   'settings-unavailable': 'Cannot safely read or save advisor settings. Inspect settings and locks before retrying.',
@@ -22,14 +22,10 @@ const ERRORS: Record<ErrorCode, string> = {
   cancelled: 'Advisor request cancelled. No exchange was committed.',
   timeout: 'Advisor request deadline exceeded. No exchange was committed.'
 };
-export type LimitResource = 'input-bytes' | 'reply-bytes' | 'context-tokens' | 'turns' | 'sessions';
+export type LimitResource = 'context-tokens';
 export type LimitDetails = { resource: LimitResource; maximum: number; actual: number };
 const LIMIT_MESSAGES: Record<LimitResource, string> = {
-  'input-bytes': 'Input byte limit exceeded. Send a shorter message.',
-  'reply-bytes': 'Reply byte limit exceeded. Request a shorter answer.',
-  'context-tokens': 'Advisor context limit exceeded. Start a new consultation with an explicit summary.',
-  turns: 'Exchange limit exceeded. Start a new consultation with an explicit summary.',
-  sessions: 'Active consultation limit exceeded. Close idle consultations before starting another.'
+  'context-tokens': 'Advisor context limit exceeded. Start a new consultation with an explicit summary.'
 };
 const REPLY_MESSAGES = {
   completion: 'Advisor completion did not stop normally.',
@@ -120,7 +116,6 @@ export function parseInput(value: unknown): { message: string; session?: string;
   const input = object(value, ['message', 'session', 'diagnostics'], 'invalid-argument');
   if (input.diagnostics !== undefined && typeof input.diagnostics !== 'boolean') throw new AdvisorError('invalid-argument');
   if (typeof input.message !== 'string' || !input.message.trim() || (input.session !== undefined && (typeof input.session !== 'string' || !input.session.trim()))) throw new AdvisorError('invalid-argument');
-  checkLimit('input-bytes', LIMITS.messageBytes, Buffer.byteLength(input.message));
   return { message: input.message, ...(input.session === undefined ? {} : { session: input.session as string }), ...(input.diagnostics === undefined ? {} : { diagnostics: input.diagnostics as boolean }) };
 }
 export function replyText(message: AssistantMessage): string {
@@ -131,7 +126,6 @@ export function replyText(message: AssistantMessage): string {
     throw new AdvisorError('invalid-response', undefined, 'content');
   }
   const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
-  checkLimit('reply-bytes', LIMITS.replyBytes, Buffer.byteLength(text));
   if (!text.trim()) throw new AdvisorError('invalid-response', undefined, 'text');
   return text;
 }

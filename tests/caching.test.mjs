@@ -44,7 +44,7 @@ function adapter(model, stream, response) {
   } };
 }
 
-test('AC-27 preserved: identifiers prefixes pinning request controls and cache usage remain stable', async () => {
+test('AC-27 AC-31 identifiers prefixes pinning request controls and cache usage remain stable without an output override', async () => {
   const manager = new Consultations(), deps = dependencies(async () => reply('Preserve this advice.'));
   const first = await manager.send({ message: 'First issue' }, deps);
   const other = await manager.send({ message: 'Separate issue' }, deps);
@@ -63,7 +63,7 @@ test('AC-27 preserved: identifiers prefixes pinning request controls and cache u
   for (const request of deps.requests) {
     assert.deepEqual(request.context.messages[0].toolsAdded, []);
     assert.equal(Object.hasOwn(request.options, 'toolChoice'), false);
-    assert.equal(request.options.maxRetries, 0); assert.equal(request.options.maxTokens, 4096);
+    assert.equal(request.options.maxRetries, 0); assert.equal(Object.hasOwn(request.options, 'maxTokens'), false);
     assert.ok(Number.isInteger(request.options.timeoutMs) && request.options.timeoutMs > 0 && request.options.timeoutMs <= 300000);
     assert.ok(request.options.signal instanceof AbortSignal);
   }

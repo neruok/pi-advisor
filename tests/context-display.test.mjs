@@ -87,8 +87,8 @@ test('AC-29 changed: large opaque replay supports several pairs using reported m
   assert.doesNotMatch(JSON.stringify(entry), /NEVER_RETAIN|encrypted_content|thinkingSignature/);
 });
 
-test('AC-29 changed: output-reserved preflight passes equality and rejects one token over without dispatch', async () => {
-  const message = 'Q', exact = pendingTokens(message) + 4096;
+test('AC-29 AC-31 pending-context preflight passes equality without a fixed output reserve and rejects one token over', async () => {
+  const message = 'Q', exact = pendingTokens(message);
   const good = depsWithWindow(exact), bad = depsWithWindow(exact - 1);
   assert.equal((await new Consultations().send({ message }, good)).ok, true);
   const failed = await new Consultations().send({ message }, bad);
@@ -172,7 +172,7 @@ test('AC-30 preserved: display has no side effects and still hides private and p
   assert.deepEqual(result, snapshot); assert.equal(f.requests.length, requests); assert.deepEqual(f.effects, []);
 });
 
-test('AC-30 changed: README describes questions, registry context and latest-call CH', async () => {
+test('AC-30 AC-31 README describes questions, registry context, Pi output defaults and latest-call CH', async () => {
   const text = await readFile(new URL('../README.md', import.meta.url), 'utf8');
-  for (const phrase of ['main agent’s message', 'contextWindow', 'latest call', 'CH', 'no fixed history-byte cap', '4096 output tokens']) assert.ok(text.includes(phrase), phrase);
+  for (const phrase of ['main agent’s message', 'contextWindow', 'latest call', 'CH', 'no fixed history-byte cap', 'omits `maxTokens`']) assert.ok(text.includes(phrase), phrase);
 });

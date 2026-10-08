@@ -20,15 +20,15 @@ async function fixture(t) {
 }
 function data(tool, result) { assert.equal(Compile(tool.outputSchema).Check(result.structuredContent), true); assert.deepEqual(result.details, result.structuredContent); assert.deepEqual(JSON.parse(result.content[0].text), result.details); return result.details; }
 
-test('AC-8 registration, strict schemas, coherent results and usage', async t => {
+test('AC-8 AC-31 registration, strict schemas, coherent results and usage', async t => {
   const f = await fixture(t); assert.deepEqual([...f.tools.keys()], ['advisor', 'advisor_sessions', 'advisor_close'], 'three tools must register');
   for (const tool of f.tools.values()) { assert.equal(tool.exposure, 'model-only'); assert.ok(tool.outputSchema); }
   const tool = f.tools.get('advisor');
   for (const bad of [{ message: null }, { message: 'Q', session: null }, { message: 'Q', workspace: true }]) assert.equal(Compile(tool.parameters).Check(bad), false);
   assert.match(tool.promptGuidelines.join('\n'), /not evidence/i); assert.match(tool.description, /charges/i);
   const first = data(tool, await tool.execute('1', { message: 'Q' }, undefined, undefined, f.ctx)); assert.equal(first.ok, true); assert.equal(first.advisory, true);
-  const oversized = data(tool, await tool.execute('too-big', { message: 'x'.repeat(16385), session: first.session }, undefined, undefined, f.ctx));
-  assert.equal(oversized.error.code, 'limit-exceeded'); assert.equal(oversized.session, first.session);
+  const oversized = data(tool, await tool.execute('too-big', { message: 'x'.repeat(272000 * 4), session: first.session }, undefined, undefined, f.ctx));
+  assert.equal(oversized.error.code, 'limit-exceeded'); assert.equal(oversized.error.limit.resource, 'context-tokens'); assert.equal(oversized.session, first.session);
   const secondResult = await tool.execute('2', { message: 'Evidence', session: first.session }, undefined, undefined, f.ctx); const second = data(tool, secondResult);
   assert.equal(second.usage.input, 10); assert.equal(second.totalUsage.input, 20); assert.equal(secondResult.usage.input, 10);
   const bad = await tool.execute('3', { message: 'Q', session: 'unknown' }, undefined, undefined, f.ctx); assert.equal(bad.isError, true); assert.equal(data(tool, bad).error.code, 'not-found');

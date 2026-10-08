@@ -15,7 +15,7 @@ export type Dependencies = {
   progress?: (phase: Phase) => void;
 };
 export type Advice = { ok: true; advisory: true; session: string; response: string; turns: number; model: Selection; usage: Usage; usageComplete: boolean; contextUsage: ContextUsage } & UsageTotals;
-export type Metadata = { session: string; label: string; turns: number; model: Selection; busy: boolean; turnsRemaining: number; historyBytes: number; contextUsage: ContextUsage } & UsageTotals;
+export type Metadata = { session: string; label: string; turns: number; model: Selection; busy: boolean; historyBytes: number; contextUsage: ContextUsage } & UsageTotals;
 const size = (history: Exchange[]): number => Buffer.byteLength(JSON.stringify(history.map(({ role, text, replay }) => ({ role, text, ...(replay ? { replay } : {}) }))));
 const retainedContext = (session: Session): ContextUsage => contextUsage(context(session.history, session.model!).messages, session.contextWindow!);
 const totals = (session: Session, pending = Boolean(session.pending)): UsageTotals => ({ totalUsage: structuredClone(session.usage), totalUsageComplete: session.totalUsageComplete && !pending });
@@ -53,7 +53,7 @@ export class Consultations {
   list(): Metadata[] {
     return [...this.sessions.values()].filter((s): s is Session & { model: Selection } => Boolean(s.model)).map(s => ({
       session: s.id, label: s.label, turns: s.history.length / 2, model: { ...s.model }, busy: Boolean(s.pending),
-      ...totals(s), turnsRemaining: this.limits.turns - s.history.length / 2,
+      ...totals(s),
       historyBytes: size(s.history), contextUsage: retainedContext(s)
     }));
   }
@@ -103,7 +103,6 @@ export class Consultations {
       timeoutMs = session.timeoutMs ?? this.limits.timeoutMs;
       armDeadline();
       const pending: Exchange[] = [...session.history, { role: 'user', text: input.message }];
-      checkLimit('turns', this.limits.turns, session.history.length / 2 + 1);
       phase = 'preparation';
       const selected = session.model ?? await interruptible(() => {
         progress(deps, 'preparing');
@@ -122,13 +121,13 @@ export class Consultations {
       const model = { ...selected };
       const window = session.contextWindow ?? deps.getContextWindow?.(model);
       if (!Number.isSafeInteger(window) || window < 1) throw new AdvisorError('model-unavailable');
-      // Pin before awaiting model work. Reserving the map slot bounds concurrent creation.
+      // Pin before awaiting model work. The map identity guards against lifecycle invalidation.
       session.model = model;
       session.contextWindow = window;
       session.selectionSource = selectionSource;
       session.timeoutMs = timeoutMs;
       diagnosticModel = { ...model };
-      checkLimit('context-tokens', window, contextUsage(context(pending, model).messages, window).tokens + this.limits.maxTokens);
+      checkLimit('context-tokens', window, contextUsage(context(pending, model).messages, window).tokens);
       phase = 'completion';
       const reply = await interruptible(() => {
         progress(deps, 'waiting');
@@ -137,7 +136,7 @@ export class Consultations {
         usageComplete = false;
         return deps.complete(model, context(pending, model), {
           signal: controller!.signal, timeoutMs: Math.max(1, Math.floor(timeoutMs - (performance.now() - started))), maxRetries: 0,
-          maxTokens: this.limits.maxTokens, cacheRetention: 'short', sessionId: session!.id,
+          cacheRetention: 'short', sessionId: session!.id,
           ...(model.reasoning && model.reasoning !== 'default' && model.reasoning !== 'off' ? { reasoning: model.reasoning } : {})
         });
       }, controller.signal);
@@ -187,7 +186,6 @@ export class Consultations {
       if (existing.pending) throw new AdvisorError('busy');
       return existing;
     }
-    checkLimit('sessions', this.limits.sessions, this.sessions.size + 1);
     const session: Session = { id: 'adv_' + randomUUID(), label: Array.from(input.message.trim().replace(/\s+/gu, ' ')).slice(0, 80).join(''), history: [], usage: zeroUsage(), totalUsageComplete: true };
     this.sessions.set(session.id, session);
     return session;

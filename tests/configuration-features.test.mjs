@@ -238,7 +238,7 @@ test('AC-20 unsupported, missing, invalid and untrusted reasoning commands never
   assert.equal(f.requests.length, 0);
 });
 
-test('AC-20 AC-25 effort reaches every request and remains pinned without toolChoice with schema-valid metadata', async t => {
+test('AC-20 AC-25 AC-31 effort reaches every request and remains pinned without toolChoice with schema-valid metadata', async t => {
   const f = await fixture(t);
   await writeFile(f.paths.global, JSON.stringify({ model: { ...pair, reasoning: 'high' } }));
   const first = await f.invoke(); assert.equal(first.details.ok, true);
@@ -249,7 +249,7 @@ test('AC-20 AC-25 effort reaches every request and remains pinned without toolCh
   assert.deepEqual(next.details.model, { ...pair, reasoning: 'high' });
   for (const request of f.requests) {
     assert.equal(request.options.reasoning, 'high'); assert.equal(request.model.id, 'luna-large');
-    assert.equal(request.options.maxTokens, 4096); assert.equal(request.options.maxRetries, 0); assert.equal(Object.hasOwn(request.options, 'toolChoice'), false);
+    assert.equal(Object.hasOwn(request.options, 'maxTokens'), false); assert.equal(request.options.maxRetries, 0); assert.equal(Object.hasOwn(request.options, 'toolChoice'), false);
     assert.deepEqual(request.context.messages[0].toolsAdded, []);
   }
   const list = await f.tools.get('advisor_sessions').execute('list', {}, undefined, undefined, f.ctx);

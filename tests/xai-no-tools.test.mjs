@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Compile } from 'typebox/compile';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-responses';
+import { buildBaseOptions } from '@earendil-works/pi-ai/api/simple-options';
 import { XAI_MODELS } from '@earendil-works/pi-ai/providers/xai.models';
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { Consultations } from '../lib/session.ts';
@@ -26,10 +27,11 @@ function successResponse() {
   return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 function realAdapter(reasoning, omitChoice = false, model = sdkModel) {
-  const requests = [];
-  return { requests, prepare: async () => ({ provider: model.provider, model: model.id, ...(reasoning ? { reasoning } : {}) }), getContextWindow: () => model.contextWindow, complete: async (_pair, context, options) => {
+  const requests = [], contexts = [];
+  return { requests, contexts, prepare: async () => ({ provider: model.provider, model: model.id, ...(reasoning ? { reasoning } : {}) }), getContextWindow: () => model.contextWindow, complete: async (_pair, context, options) => {
     assert.equal(Number.isInteger(options.timeoutMs), true);
     assert.equal(options.maxRetries, 0);
+    contexts.push(context);
     const { toolChoice, ...withoutChoice } = options;
     return streamSimple(model, context, { ...(omitChoice ? withoutChoice : options), apiKey: 'sk-offline-placeholder-not-a-real-key', fetch: async (_url, request) => {
       const payload = JSON.parse(request.body);
@@ -40,7 +42,7 @@ function realAdapter(reasoning, omitChoice = false, model = sdkModel) {
   } };
 }
 
-for (const reasoning of [undefined, 'high']) test(`AC-24 changed: xAI real-adapter requests omit tool_choice with ${reasoning ?? 'default'} effort`, async () => {
+for (const reasoning of [undefined, 'high']) test(`AC-24 AC-31 xAI real-adapter requests omit tool_choice and delegate output allowance with ${reasoning ?? 'default'} effort`, async () => {
   const manager = new Consultations(), deps = realAdapter(reasoning);
   const first = await manager.send(input, deps);
   assert.equal(first.ok, true, 'tool-free xAI request must pass the no-tools validation fixture');
@@ -49,17 +51,17 @@ for (const reasoning of [undefined, 'high']) test(`AC-24 changed: xAI real-adapt
   assert.equal(next.turns, 2);
   assert.equal(next.response, 'Offline success.');
   assert.equal(deps.requests.length, 2);
-  for (const request of deps.requests) {
+  for (const [index, request] of deps.requests.entries()) {
     assert.equal(request.tools, undefined);
     assert.equal(request.tool_choice, undefined);
-    assert.equal(request.max_output_tokens, 4096);
+    assert.equal(request.max_output_tokens, buildBaseOptions(sdkModel, deps.contexts[index], {}).maxTokens);
     assert.equal(request.store, false);
     assert.equal(request.reasoning?.effort, reasoning);
   }
   assert.equal(Compile(AdviceSchema).Check(next), true);
 });
 
-test('AC-25 AC-26 AC-27 changed: every provider omits toolChoice and requests short caching on creation and pinned continuation', async () => {
+test('AC-25 AC-26 AC-27 AC-31 every provider omits toolChoice and requests short caching on creation and pinned continuation', async () => {
   for (const provider of ['mock', 'xai', 'openai', 'anthropic', 'openai-codex', 'custom']) {
     const manager = new Consultations(), deps = dependencies();
     const selection = { provider, model: 'offline', reasoning: 'high' };
@@ -78,7 +80,7 @@ test('AC-25 AC-26 AC-27 changed: every provider omits toolChoice and requests sh
       assert.deepEqual(request.context.messages[0].toolsAdded, []);
       assert.equal(request.options.reasoning, 'high');
       assert.equal(request.options.maxRetries, 0);
-      assert.equal(request.options.maxTokens, 4096);
+      assert.equal(Object.hasOwn(request.options, 'maxTokens'), false);
       assert.equal(request.options.cacheRetention, 'short');
       assert.equal(request.options.sessionId, first.session);
       assert.ok(Number.isInteger(request.options.timeoutMs) && request.options.timeoutMs > 120000 && request.options.timeoutMs <= 300000);
@@ -88,8 +90,8 @@ test('AC-25 AC-26 AC-27 changed: every provider omits toolChoice and requests sh
   }
 });
 
-test('AC-25 changed: OpenAI real-adapter creation and continuation omit tools and tool_choice', async () => {
-  // A large-context model keeps Pi's input-budget clamp from reducing the requested 4096-token bound.
+test('AC-25 AC-31 OpenAI real-adapter creation and continuation omit tools and tool_choice and use model output allowance', async () => {
+  // A large-context model lets Pi use the full model output allowance.
   const model = OPENAI_MODELS['gpt-4.1'];
   assert.equal(model?.api, 'openai-responses', 'installed gpt-4.1 must use the Responses adapter');
   const manager = new Consultations(), deps = realAdapter(undefined, false, model);
@@ -102,7 +104,7 @@ test('AC-25 changed: OpenAI real-adapter creation and continuation omit tools an
   for (const request of deps.requests) {
     assert.equal(Object.hasOwn(request, 'tools'), false);
     assert.equal(Object.hasOwn(request, 'tool_choice'), false);
-    assert.equal(request.max_output_tokens, 4096);
+    assert.equal(request.max_output_tokens, model.maxTokens);
     assert.equal(request.store, false);
   }
 });

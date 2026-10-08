@@ -45,7 +45,7 @@ function header(data: Advice): string {
 }
 function sessionLines(entry: Metadata, expanded: boolean): string[] {
   return [
-    `${label(entry.session)}${entry.busy ? ' • busy' : ''} • ${entry.turnsRemaining} turns remaining`,
+    `${label(entry.session)}${entry.busy ? ' • busy' : ''} • ${entry.turns} exchanges`,
     ...(expanded ? [label(entry.label), `${label(entry.model?.provider)}/${label(entry.model?.model)} • ${contextLine(entry.contextUsage)} advisor context`, usageLine(entry.totalUsage, entry.totalUsageComplete)] : [])
   ];
 }
@@ -92,7 +92,7 @@ function resultLines(kind: Kind, data: Data | undefined, options: ToolRenderResu
     return lines;
   }
   if (kind === 'advisor_sessions' && 'sessions' in data) {
-    return [...styled('muted', `${data.sessions.length} active advisor consultations`), ...data.sessions.slice(0, 8).flatMap(entry => sessionLines(entry, options.expanded).flatMap(line => styled('toolOutput', line)))];
+    return [...styled('muted', `${data.sessions.length} active advisor consultations`), ...data.sessions.flatMap(entry => sessionLines(entry, options.expanded).flatMap(line => styled('toolOutput', line)))];
   }
   if (kind === 'advisor_close' && 'session' in data) return styled('muted', `Advisor consultation closed: ${label(data.session)}. Parent transcript remains.`);
   return styled('muted', 'Advisor result details unavailable.');

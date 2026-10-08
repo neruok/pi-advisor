@@ -5,7 +5,7 @@ import { dependencies, reply, deferred, waitFor, usage } from './helpers.mjs';
 
 const text = c => JSON.stringify(c.messages);
 
-test('AC-1 AC-25 isolated starts and continuations pin the selected model without toolChoice', async () => {
+test('AC-1 AC-25 AC-31 isolated starts and continuations pin the selected model without toolChoice', async () => {
   const manager = new Consultations(), deps = dependencies();
   const a = await manager.send({ message: 'FIRST_PROBLEM' }, deps);
   assert.equal(a.ok, true, 'starting must produce a consultation');
@@ -18,7 +18,7 @@ test('AC-1 AC-25 isolated starts and continuations pin the selected model withou
   assert.equal(deps.requests[2].context.messages.length, 4);
   assert.match(text(deps.requests[2].context), /FIRST_PROBLEM/);
   assert.doesNotMatch(text(deps.requests[2].context), /SECOND_PROBLEM/);
-  for (const r of deps.requests) { assert.deepEqual(r.context.messages[0].toolsAdded, []); assert.equal(Object.hasOwn(r.options, 'toolChoice'), false); assert.equal(r.options.maxRetries, 0); assert.equal(r.options.maxTokens, 4096); assert.notEqual(r.options.sessionId, 'PARENT_SESSION'); }
+  for (const r of deps.requests) { assert.deepEqual(r.context.messages[0].toolsAdded, []); assert.equal(Object.hasOwn(r.options, 'toolChoice'), false); assert.equal(r.options.maxRetries, 0); assert.equal(Object.hasOwn(r.options, 'maxTokens'), false); assert.notEqual(r.options.sessionId, 'PARENT_SESSION'); }
 });
 
 test('AC-2 AC-17 text completion validation does not expose thinking', async () => {
@@ -61,22 +61,9 @@ test('AC-3 atomic failures, usage, busy, abort, timeout and late completions', a
   const pre = new AbortController(); pre.abort(); const noCall = dependencies(); assert.equal((await manager.send({ message: 'Q' }, noCall, pre.signal)).error.code, 'cancelled'); assert.equal(noCall.requests.length, 0);
 });
 
-test('AC-4 AC-29 hard message, pair, context, and session limits preserve state', async () => {
-  const manager = new Consultations(), deps = dependencies();
-  const exact = await manager.send({ message: 'é'.repeat(8192) }, deps);
-  assert.equal(exact.ok, true, '16384-byte input boundary must succeed');
-  const before = deps.requests.length;
-  assert.equal((await manager.send({ message: 'é'.repeat(8192) + 'x' }, deps)).error.code, 'limit-exceeded'); assert.equal(deps.requests.length, before);
-  for (let i = 1; i < 8; i++) assert.equal((await manager.send({ message: 'Q' }, deps)).ok, true);
-  assert.equal((await manager.send({ message: 'Q' }, deps)).error.code, 'limit-exceeded');
-  assert.equal(manager.close(exact.session).ok, true); assert.equal((await manager.send({ message: 'Q' }, deps)).ok, true);
-  const turns = new Consultations(); const first = await turns.send({ message: 'Q' }, deps);
-  for (let i = 1; i < 24; i++) assert.equal((await turns.send({ session: first.session, message: 'Q' }, deps)).ok, true);
-  assert.equal((await turns.send({ session: first.session, message: 'Q' }, deps)).error.code, 'limit-exceeded'); assert.equal(turns.list()[0].turns, 24);
-  const sizes = new Consultations(), replyLimit = 'x'.repeat(16384 - '\n[CONTINUE]'.length) + '\n[CONTINUE]';
-  const big = await sizes.send({ message: 'Q' }, dependencies(async () => reply(replyLimit))); assert.equal(big.ok, true);
-  assert.equal((await sizes.send({ session: big.session, message: 'Q' }, dependencies(async () => reply('x' + replyLimit)))).error.code, 'limit-exceeded'); assert.equal(sizes.list()[0].turns, 1);
-  // REQ-29 supersedes only the transcript byte cap with the model token window.
+test('AC-29 AC-31 context limits preserve state after fixed resource caps are removed', async () => {
+  const deps = dependencies();
+  // REQ-31 removes fixed resource caps. The model context window still holds.
   const boundary = dependencies(async () => reply('A\n[CONTINUE]', { usage: { ...usage, totalTokens: 5000 } }));
   boundary.getContextWindow = () => 5000;
   const bounded = new Consultations(), ok = await bounded.send({ message: 'Q' }, boundary); assert.equal(ok.ok, true);

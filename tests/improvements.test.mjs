@@ -18,27 +18,28 @@ function limit(result, resource, maximum, actual, guidance) {
 }
 const pairBytes = (message, raw) => Buffer.byteLength(JSON.stringify([{ role: 'user', text: message }, { role: 'assistant', text: raw }]));
 
-test('AC-11 oversized multibyte input identifies its limit without provider work', async () => {
-  const manager = new Consultations(), deps = dependencies();
-  limit(await manager.send({ message: 'é'.repeat(8192) + 'x' }, deps), 'input-bytes', 16384, 16385, /shorter message/i);
-  assert.equal(deps.requests.length, 0); assert.deepEqual(manager.list(), []);
+test('AC-31 multibyte input above the former byte limit reaches the provider unchanged', async () => {
+  const manager = new Consultations(), deps = dependencies(), message = 'é'.repeat(8192) + 'x';
+  const result = await manager.send({ message }, deps);
+  assert.equal(result.ok, true); assert.equal(deps.requests.length, 1);
+  assert.equal(deps.requests[0].context.messages.at(-1).content, message); assert.equal(manager.list()[0].turns, 1);
 });
 
-test('AC-11 oversized reply identifies its limit and keeps completed usage', async () => {
+test('AC-31 reply above the former byte limit commits and keeps completed usage', async () => {
   const manager = new Consultations(), deps = dependencies();
   const first = await manager.send({ message: 'Q' }, deps);
   const raw = 'x'.repeat(16385 - '\n[CONTINUE]'.length) + '\n[CONTINUE]';
   const result = await manager.send({ session: first.session, message: 'SHORTER' }, dependencies(async () => reply(raw)));
-  limit(result, 'reply-bytes', 16384, 16385, /shorter answer/i);
-  assert.deepEqual(result.usage, usage); assert.equal(manager.list()[0].turns, 1);
+  assert.equal(result.ok, true); assert.equal(result.response, raw);
+  assert.deepEqual(result.usage, usage); assert.equal(result.totalUsage.input, 20); assert.equal(manager.list()[0].turns, 2);
 });
 
-test('AC-11 AC-29 context preflight and pair overflow report model tokens', async () => {
+test('AC-11 AC-29 AC-31 context preflight and pair overflow report model tokens', async () => {
   const raw = 'A\n[CONTINUE]', maximum = 5000;
   const initial = dependencies(async () => reply(raw, { usage: { ...usage, totalTokens: maximum } })); initial.getContextWindow = () => maximum;
   const manager = new Consultations(), first = await manager.send({ message: 'Q' }, initial);
   assert.equal(first.ok, true);
-  const deps = dependencies(), actual = maximum + estimateTokens({ role: 'user', content: 'Q', timestamp: 0 }) + 4096;
+  const deps = dependencies(), actual = maximum + estimateTokens({ role: 'user', content: 'Q', timestamp: 0 });
   limit(await manager.send({ session: first.session, message: 'Q' }, deps), 'context-tokens', maximum, actual, /new consultation.*summary/i);
   assert.equal(deps.requests.length, 0); assert.equal(manager.list()[0].turns, 1);
   const tiny = new Consultations(); initial.getContextWindow = () => maximum - 1;
@@ -46,19 +47,19 @@ test('AC-11 AC-29 context preflight and pair overflow report model tokens', asyn
   assert.deepEqual(tiny.list(), []);
 });
 
-test('AC-11 exhausted turns identify the attempted pair count', async () => {
+test('AC-31 exchange twenty-five commits beyond the former turn cap', async () => {
   const manager = new Consultations(), deps = dependencies();
   const first = await manager.send({ message: 'Q' }, deps);
   for (let i = 1; i < 24; i++) await manager.send({ session: first.session, message: 'Q' }, deps);
-  limit(await manager.send({ session: first.session, message: 'Q' }, deps), 'turns', 24, 25, /new consultation.*summary/i);
-  assert.equal(manager.list()[0].turns, 24);
+  const next = await manager.send({ session: first.session, message: 'Q' }, deps);
+  assert.equal(next.ok, true); assert.equal(next.turns, 25); assert.equal(manager.list()[0].turns, 25);
 });
 
-test('AC-11 exhausted sessions identify the attempted session count', async () => {
+test('AC-31 consultation nine commits beyond the former active-session cap', async () => {
   const manager = new Consultations(), deps = dependencies();
   for (let i = 0; i < 8; i++) await manager.send({ message: 'Q' }, deps);
-  limit(await manager.send({ message: 'Q' }, deps), 'sessions', 8, 9, /close.*idle/i);
-  assert.equal(manager.list().length, 8);
+  assert.equal((await manager.send({ message: 'Q' }, deps)).ok, true);
+  assert.equal(manager.list().length, 9);
 });
 
 test('AC-12 preflight, success and completed rejected replies report completeness and totals', async () => {
@@ -127,11 +128,11 @@ test('AC-12 busy calls do not damage the owning request accounting', async t => 
   assert.equal(result.totalUsage.input, 20); assert.equal(result.totalUsageComplete, true);
 });
 
-test('AC-13 AC-29 discovery shows committed capacity and independent usage snapshots, not transcripts', async () => {
+test('AC-13 AC-29 AC-31 discovery shows committed context and independent usage snapshots, not transcripts', async () => {
   const manager = new Consultations(), raw = 'VALIDATED_ADVICE\n[CONTINUE]';
   const first = await manager.send({ message: 'Q' }, dependencies(async () => reply(raw)));
   let entry = manager.list()[0];
-  assert.equal(entry.turnsRemaining, 23); assert.equal(entry.historyBytes, pairBytes('Q', raw));
+  assert.equal(entry.turns, 1); assert.equal(Object.hasOwn(entry, 'turnsRemaining'), false); assert.equal(entry.historyBytes, pairBytes('Q', raw));
   assert.equal(entry.contextUsage.contextWindow, 272000); assert.equal(entry.contextUsage.tokens, 13);
   assert.equal(Object.hasOwn(entry, 'historyBytesRemaining'), false);
   assert.equal(entry.totalUsage.input, 10); assert.equal(entry.totalUsageComplete, true);
@@ -147,7 +148,7 @@ test('AC-13 AC-29 discovery shows committed capacity and independent usage snaps
   controller.abort(); await pending; late.resolve(reply()); await new Promise(r => setImmediate(r));
   assert.equal(manager.list()[0].totalUsageComplete, false);
   await manager.send({ session: first.session, message: 'BAD' }, dependencies(async () => reply('REJECTED_TEXT', { stopReason: 'length' })));
-  entry = manager.list()[0]; assert.equal(entry.totalUsage.input, 20); assert.equal(entry.turnsRemaining, 23);
+  entry = manager.list()[0]; assert.equal(entry.totalUsage.input, 20); assert.equal(entry.turns, 1);
   assert.equal(entry.historyBytes, pairBytes('Q', raw)); assert.equal(entry.totalUsageComplete, false);
   manager.close(first.session); assert.deepEqual(manager.list(), []);
   await manager.send({ message: 'Other' }, dependencies()); manager.clear(); assert.deepEqual(manager.list(), []);
@@ -181,7 +182,7 @@ function rendered(component, width) {
   return lines.join('\n');
 }
 
-test('AC-14 AC-19 AC-30 registered renderers show questions, previews, full expansion, metadata and safe fallback', async t => {
+test('AC-14 AC-19 AC-30 AC-31 registered renderers show questions, previews, full expansion, metadata and safe fallback', async t => {
   const f = await toolFixture(t), tool = f.tools.get('advisor');
   for (const item of f.tools.values()) { assert.equal(typeof item.renderCall, 'function'); assert.equal(typeof item.renderResult, 'function'); }
   let color = 'A'; const theme = { fg: (_key, text) => `${color}${text}`, bold: text => text };
@@ -204,7 +205,7 @@ test('AC-14 AC-19 AC-30 registered renderers show questions, previews, full expa
   const listTool = f.tools.get('advisor_sessions'), list = await listTool.execute('list', {}, undefined, undefined, f.ctx);
   coherent(listTool, list);
   const listView = listTool.renderResult(list, { expanded: true, isPartial: false }, theme, renderContext);
-  assert.match(rendered(listView, 80), /23/); assert.doesNotMatch(rendered(listView, 80), /END_OF_FULL_ADVICE/);
+  assert.match(rendered(listView, 80), /1 exchanges/); assert.doesNotMatch(rendered(listView, 80), /END_OF_FULL_ADVICE/);
   const closeTool = f.tools.get('advisor_close'), closed = await closeTool.execute('close', { session: data.session }, undefined, undefined, f.ctx);
   const closeView = closeTool.renderResult(closed, { expanded: false, isPartial: false }, theme, renderContext);
   coherent(closeTool, closed); assert.match(rendered(closeView, 80), /closed/i);
@@ -214,7 +215,7 @@ test('AC-14 AC-19 AC-30 registered renderers show questions, previews, full expa
   for (const item of f.tools.values()) for (const width of [1, 8, 30, 80]) rendered(item.renderCall({ session: '\x1b\x07界😀' }, theme, renderContext), width);
 });
 
-test('AC-14 progress is phase-only, callback failures cannot change outcomes, and no late updates occur', async t => {
+test('AC-14 AC-31 progress is phase-only, callback failures cannot change outcomes, and no late updates occur', async t => {
   const f = await toolFixture(t), tool = f.tools.get('advisor'), late = deferred(), updates = [], controller = new AbortController();
   let requested = false;
   f.ctx.modelRegistry.streamSimple = () => { requested = true; return { result: async () => late.promise }; };
@@ -239,13 +240,12 @@ test('AC-14 progress is phase-only, callback failures cannot change outcomes, an
   const continuation = [];
   await tool.execute('next', { session: good.details.session, message: 'NEXT' }, undefined, update => continuation.push(update), f.ctx);
   assert.deepEqual(continuation.map(update => update.details.phase), ['waiting']);
-  for (let i = 1; i < 8; i++) await tool.execute(`fill-${i}`, { message: 'Q' }, undefined, undefined, f.ctx);
   const exhausted = [];
-  const limited = await tool.execute('full', { message: 'Q' }, undefined, update => exhausted.push(update), f.ctx);
-  assert.equal(coherent(tool, limited).error.limit.resource, 'sessions'); assert.deepEqual(exhausted, []);
+  const limited = await tool.execute('full', { session: good.details.session, message: 'x'.repeat(272000 * 4) }, undefined, update => exhausted.push(update), f.ctx);
+  assert.equal(coherent(tool, limited).error.limit.resource, 'context-tokens'); assert.deepEqual(exhausted, []);
 });
 
-test('AC-14 failure views label unknown usage and show resource-specific recovery without raw errors', async t => {
+test('AC-14 AC-31 failure views label unknown usage and show resource-specific recovery without raw errors', async t => {
   const f = await toolFixture(t), tool = f.tools.get('advisor');
   assert.equal(typeof tool.renderResult, 'function');
   const theme = { fg: (_key, text) => text, bold: text => text };
@@ -254,10 +254,10 @@ test('AC-14 failure views label unknown usage and show resource-specific recover
   coherent(tool, failed);
   const view = tool.renderResult(failed, { expanded: true, isPartial: false }, theme, renderContext);
   assert.match(rendered(view, 80), /incomplete/i); assert.doesNotMatch(rendered(view, 80), /SECRET_PROVIDER_ERROR/);
-  const limited = await tool.execute('limited', { message: 'x'.repeat(16385) }, undefined, undefined, f.ctx);
+  const limited = await tool.execute('limited', { message: 'x'.repeat(272000 * 4) }, undefined, undefined, f.ctx);
   coherent(tool, limited);
   const limitView = tool.renderResult(limited, { expanded: false, isPartial: false }, theme, renderContext);
-  assert.match(rendered(limitView, 80), /input-bytes/); assert.match(rendered(limitView, 80), /shorter message/i);
+  assert.match(rendered(limitView, 80), /context-tokens/); assert.match(rendered(limitView, 80), /new consultation with an\s+explicit summary/i);
   for (const width of [1, 8, 30, 80]) { rendered(view, width); rendered(limitView, width); }
 });
 

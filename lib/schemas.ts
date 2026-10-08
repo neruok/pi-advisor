@@ -7,7 +7,7 @@ export const UsageSchema = Type.Object({ input: Type.Number(), output: Type.Numb
 const totals = { totalUsage: UsageSchema, totalUsageComplete: Type.Boolean() };
 export const ContextUsageSchema = Type.Object({ tokens: Type.Number({ minimum: 0 }), contextWindow: Type.Integer({ minimum: 1 }), percent: Type.Number({ minimum: 0 }) }, object);
 const LimitSchema = Type.Object({
-  resource: Type.Union(['input-bytes', 'reply-bytes', 'context-tokens', 'turns', 'sessions'].map(s => Type.Literal(s))),
+  resource: Type.Literal('context-tokens'),
   maximum: Type.Integer({ minimum: 0 }), actual: Type.Integer({ minimum: 0 })
 }, object);
 export const DiagnosticsSchema = Type.Object({
@@ -27,10 +27,10 @@ export const FailureSchema = Type.Union([Type.Object(failure, object), Type.Obje
 export const InputSchema = Type.Object({ message: text, session: Type.Optional(text), diagnostics: Type.Optional(Type.Boolean({ description: 'Opt in for safe failure phase, category and selected model metadata. No raw provider errors. Does not retry.' })) }, object);
 export const CloseInputSchema = Type.Object({ session: text }, object);
 export const EmptyInputSchema = Type.Object({}, object);
-export const AdviceSchema = Type.Union([Type.Object({ ok: Type.Literal(true), advisory: Type.Literal(true), session: text, response: text, turns: Type.Integer({ minimum: 1, maximum: 24 }), model: ModelSchema, usage: UsageSchema, usageComplete: Type.Boolean(), contextUsage: ContextUsageSchema, ...totals }, object), FailureSchema]);
+export const AdviceSchema = Type.Union([Type.Object({ ok: Type.Literal(true), advisory: Type.Literal(true), session: text, response: text, turns: Type.Integer({ minimum: 1 }), model: ModelSchema, usage: UsageSchema, usageComplete: Type.Boolean(), contextUsage: ContextUsageSchema, ...totals }, object), FailureSchema]);
 export const ListSchema = Type.Union([Type.Object({ ok: Type.Literal(true), sessions: Type.Array(Type.Object({
-  session: text, label: text, turns: Type.Integer({ minimum: 0, maximum: 24 }), model: ModelSchema, busy: Type.Boolean(),
-  ...totals, turnsRemaining: Type.Integer({ minimum: 0, maximum: 24 }),
+  session: text, label: text, turns: Type.Integer({ minimum: 0 }), model: ModelSchema, busy: Type.Boolean(),
+  ...totals,
   historyBytes: Type.Integer({ minimum: 0 }), contextUsage: ContextUsageSchema
-}, object), { maxItems: 8 }) }, object), FailureSchema]);
+}, object)) }, object), FailureSchema]);
 export const CloseSchema = Type.Union([Type.Object({ ok: Type.Literal(true), session: text }, object), FailureSchema]);
