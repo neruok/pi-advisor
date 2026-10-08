@@ -19,7 +19,7 @@ async function fixture(t) {
     sendMessage: (...args) => sideEffects.push(['message', args]), sendUserMessage: (...args) => sideEffects.push(['user', args]), appendEntry: (...args) => sideEffects.push(['entry', args]) });
   let requests = 0;
   const ctx = { cwd: dir, mode: 'tui', hasUI: true, isProjectTrusted: () => false, modelRegistry: {
-    find: () => ({ provider: model.provider, id: model.model, api: 'mock-api' }), hasConfiguredAuth: () => true,
+    find: () => ({ provider: model.provider, id: model.model, api: 'mock-api', contextWindow: 272000 }), hasConfiguredAuth: () => true,
     streamSimple: () => { requests++; return { result: async () => reply() }; }
   } };
   return { tools, ctx, sideEffects, requestCount: () => requests };

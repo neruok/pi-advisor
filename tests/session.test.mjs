@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Consultations } from '../lib/session.ts';
-import { dependencies, reply, deferred, waitFor } from './helpers.mjs';
+import { dependencies, reply, deferred, waitFor, usage } from './helpers.mjs';
 
 const text = c => JSON.stringify(c.messages);
 
@@ -61,7 +61,7 @@ test('AC-3 atomic failures, usage, busy, abort, timeout and late completions', a
   const pre = new AbortController(); pre.abort(); const noCall = dependencies(); assert.equal((await manager.send({ message: 'Q' }, noCall, pre.signal)).error.code, 'cancelled'); assert.equal(noCall.requests.length, 0);
 });
 
-test('AC-4 hard byte, pair, transcript, and session limits preserve state', async () => {
+test('AC-4 AC-29 hard message, pair, context, and session limits preserve state', async () => {
   const manager = new Consultations(), deps = dependencies();
   const exact = await manager.send({ message: 'é'.repeat(8192) }, deps);
   assert.equal(exact.ok, true, '16384-byte input boundary must succeed');
@@ -76,12 +76,15 @@ test('AC-4 hard byte, pair, transcript, and session limits preserve state', asyn
   const sizes = new Consultations(), replyLimit = 'x'.repeat(16384 - '\n[CONTINUE]'.length) + '\n[CONTINUE]';
   const big = await sizes.send({ message: 'Q' }, dependencies(async () => reply(replyLimit))); assert.equal(big.ok, true);
   assert.equal((await sizes.send({ session: big.session, message: 'Q' }, dependencies(async () => reply('x' + replyLimit)))).error.code, 'limit-exceeded'); assert.equal(sizes.list()[0].turns, 1);
-  // Tune only the test fixture's bound to demonstrate exact serialized accounting.
-  const pairBytes = Buffer.byteLength(JSON.stringify([{ role: 'user', text: 'Q' }, { role: 'assistant', text: 'A\n[CONTINUE]' }]));
-  const bounded = new Consultations({ historyBytes: pairBytes });
-  const ok = await bounded.send({ message: 'Q' }, dependencies(async () => reply('A\n[CONTINUE]'))); assert.equal(ok.ok, true);
-  assert.equal((await bounded.send({ session: ok.session, message: 'Q' }, deps)).error.code, 'limit-exceeded');
-  const tooSmall = new Consultations({ historyBytes: pairBytes - 1 }); assert.equal((await tooSmall.send({ message: 'Q' }, dependencies(async () => reply('A\n[CONTINUE]')))).error.code, 'limit-exceeded'); assert.deepEqual(tooSmall.list(), []);
+  // REQ-29 supersedes only the transcript byte cap with the model token window.
+  const boundary = dependencies(async () => reply('A\n[CONTINUE]', { usage: { ...usage, totalTokens: 5000 } }));
+  boundary.getContextWindow = () => 5000;
+  const bounded = new Consultations(), ok = await bounded.send({ message: 'Q' }, boundary); assert.equal(ok.ok, true);
+  assert.equal(ok.contextUsage.tokens, 5000);
+  const overflow = await bounded.send({ session: ok.session, message: 'Q' }, deps);
+  assert.equal(overflow.error.code, 'limit-exceeded'); assert.equal(overflow.error.limit.resource, 'context-tokens');
+  boundary.getContextWindow = () => 4999;
+  const tooSmall = new Consultations(); assert.equal((await tooSmall.send({ message: 'Q' }, boundary)).error.code, 'limit-exceeded'); assert.deepEqual(tooSmall.list(), []);
 });
 
 test('AC-5 metadata-only discovery, busy close, deletion and reset', async () => {

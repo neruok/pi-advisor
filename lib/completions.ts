@@ -1,6 +1,6 @@
 import { getAgentDir, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { fuzzyFilter, type AutocompleteItem } from '@earendil-works/pi-tui';
-import { REASONING_LEVELS, parseSelection } from './protocol.ts';
+import { REASONING_LEVELS, parseSelection, parseTimeoutMs } from './protocol.ts';
 import { supportedReasoning } from './reasoning.ts';
 import { loadSettings, settingsPaths } from './settings.ts';
 
@@ -11,6 +11,7 @@ const commands: Choice[] = [
   { value: 'show', description: 'Show effective advisor settings' },
   { value: 'model', description: 'Set the advisor provider and model' },
   { value: 'reasoning', description: 'Inspect or set advisor reasoning effort' },
+  { value: 'timeout', description: 'Inspect or set the advisor deadline in milliseconds' },
 ];
 const scopes: Choice[] = [
   { value: '--global', description: 'Use global settings (default save scope)' },
@@ -28,6 +29,12 @@ function syntax(prefix: string): Syntax | undefined {
     if (args.length > 1) return undefined;
   } else if (command === 'reasoning') {
     if (args.length > 2 || (argument && !REASONING_LEVELS.some(level => level === argument))) return undefined;
+  } else if (command === 'timeout') {
+    if (args.length > 2) return undefined;
+    if (argument && argument !== 'default') {
+      if (!/^[0-9]+$/.test(argument)) return undefined;
+      try { parseTimeoutMs(Number(argument)); } catch { return undefined; }
+    }
   } else if (command === 'model') {
     if (args.length > 3) return undefined;
   } else if (command) return undefined;
@@ -39,7 +46,8 @@ async function choices(input: Syntax, ctx?: CompletionContext): Promise<Choice[]
   const availableScopes = scoped ? [] : scopes;
   if (fragment.startsWith('--')) return availableScopes;
   if (!command) return [...commands, ...availableScopes];
-  if (command === 'show' || (command === 'reasoning' && args.length === 2) || args.length === 3) return availableScopes;
+  if (command === 'show' || ((command === 'reasoning' || command === 'timeout') && args.length === 2) || args.length === 3) return availableScopes;
+  if (command === 'timeout') return [{ value: 'default', description: 'Remove the scoped timeout and restore inheritance' }];
   if (!ctx) return [];
   if (command === 'reasoning') {
     if (project && !ctx.isProjectTrusted()) return [];

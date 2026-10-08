@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Compile } from 'typebox/compile';
 import { CombinedAutocompleteProvider, visibleWidth } from '@earendil-works/pi-tui';
 import extension from '../advisor.ts';
-import { parseSettings, loadSettings, settingsPaths } from '../lib/settings.ts';
+import { parseSettings, loadSettings, saveSettings, settingsPaths } from '../lib/settings.ts';
 import { reply } from './helpers.mjs';
 
 const pair = { provider: 'chat', model: 'luna-large' };
@@ -21,9 +21,9 @@ async function fixture(t) {
   const paths = settingsPaths(cwd, agent);
   await writeFile(paths.global, JSON.stringify({ model: pair }));
   const models = [
-    { provider: 'chat', id: 'luna-large', name: 'Luna Large', api: 'mock-api', reasoning: true, thinkingLevelMap: { xhigh: null, max: null } },
-    { provider: 'chat', id: 'other/small', name: 'Tiny Moon', api: 'mock-api', reasoning: false },
-    { provider: 'another', id: 'plain', name: 'Plain', api: 'mock-api', reasoning: false },
+    { contextWindow: 272000, provider: 'chat', id: 'luna-large', name: 'Luna Large', api: 'mock-api', reasoning: true, thinkingLevelMap: { xhigh: null, max: null } },
+    { contextWindow: 64000, provider: 'chat', id: 'other/small', name: 'Tiny Moon', api: 'mock-api', reasoning: false },
+    { contextWindow: 32000, provider: 'another', id: 'plain', name: 'Plain', api: 'mock-api', reasoning: false },
     { provider: 'virtual-only', id: 'virtual', name: 'Virtual', api: 'pi-virtual', reasoning: true },
   ];
   const commands = new Map(), tools = new Map(), events = new Map(), notices = [], requests = [];
@@ -48,6 +48,137 @@ async function fixture(t) {
   return { paths, models, commands, tools, events, ctx, notices, requests, command, tool, complete, values, invoke, trust: value => { trusted = value; } };
 }
 const theme = { fg: (_key, text) => text, bold: text => text };
+
+test('AC-26 changed: timeout settings validate bounds and resolve independently of the model', async t => {
+  const f = await fixture(t);
+  for (const timeoutMs of [1, 300000, 2147483647]) assert.equal(parseSettings({ timeoutMs }).timeoutMs, timeoutMs);
+  for (const timeoutMs of [0, -1, 1.5, null, '300000', true, 2147483648, Number.MAX_SAFE_INTEGER]) {
+    assert.throws(() => parseSettings({ model: pair, timeoutMs }), error => error.code === 'invalid-config');
+  }
+  assert.throws(() => parseSettings({ model: { ...pair, timeoutMs: 300000 } }));
+  await writeFile(f.paths.global, JSON.stringify({ model: { ...pair, reasoning: 'high' }, timeoutMs: 600000 }));
+  await writeFile(f.paths.project, JSON.stringify({ model: { ...pair, model: 'other/small' } }));
+  let loaded = await loadSettings(f.paths, true);
+  assert.equal(loaded.settings.timeoutMs, 600000); assert.equal(loaded.timeoutSource, 'global');
+  assert.equal(loaded.source, 'project'); assert.equal(loaded.settings.model.reasoning, undefined);
+  await writeFile(f.paths.project, JSON.stringify({ timeoutMs: 900000 }));
+  loaded = await loadSettings(f.paths, true);
+  assert.deepEqual(loaded.settings.model, { ...pair, reasoning: 'high' });
+  assert.equal(loaded.source, 'global'); assert.equal(loaded.settings.timeoutMs, 900000); assert.equal(loaded.timeoutSource, 'project');
+  await writeFile(f.paths.project, '{');
+  assert.equal((await loadSettings(f.paths, false)).settings.timeoutMs, 600000);
+  await assert.rejects(loadSettings(f.paths, true));
+  await writeFile(f.paths.global, JSON.stringify({ timeoutMs: 0 }));
+  await writeFile(f.paths.project, JSON.stringify({ model: pair, timeoutMs: 900000 }));
+  await assert.rejects(loadSettings(f.paths, true));
+  assert.equal(f.requests.length, 0);
+});
+
+test('AC-26 changed: timeout query show autocomplete and reset work without model work', async t => {
+  const f = await fixture(t), before = await readFile(f.paths.global, 'utf8');
+  for (const hasUI of [true, false]) {
+    f.ctx.hasUI = hasUI;
+    await f.command.handler('timeout', f.ctx);
+    assert.match(f.notices.at(-1), /Timeout: 300000 ms \(default\)/);
+    await f.command.handler('show', f.ctx);
+    assert.match(f.notices.at(-1), /Timeout: 300000 ms \(default\)/);
+  }
+  assert.equal(await readFile(f.paths.global, 'utf8'), before);
+  assert.deepEqual(await f.values('ti'), ['timeout']);
+  assert.deepEqual(await f.values('timeout d'), ['timeout default']);
+  assert.deepEqual(await f.values('--project timeout d'), ['--project timeout default']);
+  for (const prefix of ['timeout nope ', 'timeout default extra ', 'timeout 0 ']) assert.equal(await f.complete(prefix), null);
+  await writeFile(f.paths.global, '{}');
+  await f.command.handler('timeout 600000', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { timeoutMs: 600000 });
+  await f.command.handler('--project timeout 900000', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.project, 'utf8')), { timeoutMs: 900000 });
+  await f.command.handler('--project timeout default', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.project, 'utf8')), {});
+  assert.match(f.notices.at(-1), /Timeout: 600000 ms \(global\)/);
+  await f.command.handler('timeout default', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), {});
+  assert.match(f.notices.at(-1), /Timeout: 300000 ms \(default\)/);
+  assert.equal(f.requests.length, 0);
+});
+
+test('AC-26 changed: scoped commands preserve owned timeout model and effort without copying overrides', async t => {
+  const f = await fixture(t);
+  const global = { model: { ...pair, reasoning: 'high' }, timeoutMs: 600000 };
+  const project = { model: { ...pair, model: 'other/small', reasoning: 'off' }, timeoutMs: 900000 };
+  await writeFile(f.paths.global, JSON.stringify(global)); await writeFile(f.paths.project, JSON.stringify(project));
+  await f.command.handler('timeout 700000', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { ...global, timeoutMs: 700000 });
+  await f.command.handler('--project timeout 1000000', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.project, 'utf8')), { ...project, timeoutMs: 1000000 });
+  await f.command.handler('reasoning low', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { model: { ...pair, reasoning: 'low' }, timeoutMs: 700000 });
+  await f.command.handler('model chat luna-large', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { model: pair, timeoutMs: 700000 });
+  f.ctx.hasUI = true; f.ctx.ui.select = async () => 'chat/other/small';
+  await f.command.handler('', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { model: { ...pair, model: 'other/small' }, timeoutMs: 700000 });
+  await rm(f.paths.project); await f.command.handler('--project reasoning off', f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(f.paths.project, 'utf8')), { model: { ...pair, model: 'other/small', reasoning: 'off' } });
+  assert.equal((await loadSettings(f.paths, true)).settings.timeoutMs, 700000);
+  const saved = await readFile(f.paths.project, 'utf8');
+  for (const args of ['--project timeout 0', 'timeout -1', 'timeout 1.5', 'timeout 1e3', 'timeout 2147483648', 'timeout null', 'timeout 300000 extra', '--global --project timeout 300000']) {
+    await f.command.handler(args, f.ctx);
+  }
+  assert.equal(await readFile(f.paths.project, 'utf8'), saved);
+  f.trust(false); await f.command.handler('--project timeout 300000', f.ctx);
+  assert.equal(await readFile(f.paths.project, 'utf8'), saved);
+  f.trust(true); f.ctx.waitForIdle = async () => { f.trust(false); };
+  await f.command.handler('--project timeout 300000', f.ctx);
+  assert.equal(await readFile(f.paths.project, 'utf8'), saved);
+  assert.equal(f.requests.length, 0);
+});
+
+test('AC-26 changed: saves preserve independent fields from the locked target checkpoint', async t => {
+  const f = await fixture(t);
+  await writeFile(f.paths.global, JSON.stringify({ model: { ...pair, reasoning: 'high' }, timeoutMs: 700000 }));
+  await saveSettings(f.paths, 'global', { model: pair }, true, 'timeoutMs');
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { model: pair, timeoutMs: 700000 });
+  const changedModel = { ...pair, model: 'other/small', reasoning: 'off' };
+  await writeFile(f.paths.global, JSON.stringify({ model: changedModel, timeoutMs: 700000 }));
+  await saveSettings(f.paths, 'global', { timeoutMs: 900000 }, true, 'model');
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { model: changedModel, timeoutMs: 900000 });
+  await saveSettings(f.paths, 'global', {}, true, 'model');
+  assert.deepEqual(JSON.parse(await readFile(f.paths.global, 'utf8')), { model: changedModel });
+  await saveSettings(f.paths, 'project', { timeoutMs: 600000 }, true, 'model');
+  assert.deepEqual(JSON.parse(await readFile(f.paths.project, 'utf8')), { timeoutMs: 600000 });
+  await saveSettings(f.paths, 'project', { model: pair }, true, 'timeoutMs');
+  assert.deepEqual(JSON.parse(await readFile(f.paths.project, 'utf8')), { model: pair, timeoutMs: 600000 });
+  await saveSettings(f.paths, 'project', {}, true, 'model');
+  assert.deepEqual(JSON.parse(await readFile(f.paths.project, 'utf8')), { model: pair });
+  assert.equal(f.requests.length, 0);
+});
+
+test('AC-26 changed: registered tools pin timeout while new consultations resolve fresh overrides', async t => {
+  const f = await fixture(t);
+  await writeFile(f.paths.global, JSON.stringify({ model: { ...pair, reasoning: 'high' }, timeoutMs: 600000 }));
+  await writeFile(f.paths.project, JSON.stringify({ timeoutMs: 900000 }));
+  const first = await f.invoke(); assert.equal(first.details.ok, true);
+  assert.ok(f.requests[0].options.timeoutMs > 899000 && f.requests[0].options.timeoutMs <= 900000);
+  await writeFile(f.paths.project, JSON.stringify({ model: { ...pair, model: 'other/small' }, timeoutMs: 30000 }));
+  const next = await f.invoke({ session: first.details.session, message: 'Continue' }); assert.equal(next.details.ok, true);
+  assert.ok(f.requests[1].options.timeoutMs > 899000 && f.requests[1].options.timeoutMs <= 900000);
+  assert.deepEqual(next.details.model, { ...pair, reasoning: 'high' });
+  const fresh = await f.invoke(); assert.equal(fresh.details.ok, true);
+  assert.ok(f.requests[2].options.timeoutMs > 29000 && f.requests[2].options.timeoutMs <= 30000);
+  f.trust(false);
+  const untrusted = await f.invoke(); assert.equal(untrusted.details.ok, true);
+  assert.ok(f.requests[3].options.timeoutMs > 599000 && f.requests[3].options.timeoutMs <= 600000);
+  for (const result of [first, next, fresh, untrusted]) assert.equal(Compile(f.tool.outputSchema).Check(result.details), true);
+  for (const request of f.requests) { assert.equal(request.options.maxRetries, 0); assert.equal(Object.hasOwn(request.options, 'toolChoice'), false); }
+  assert.equal(Compile(f.tool.parameters).Check({ message: 'Q', timeoutMs: 600000 }), false);
+});
+
+test('AC-26 changed: README documents units default precedence pinning and timeout commands', async () => {
+  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+  for (const text of ['300000', '2147483647', 'timeoutMs', '/advisor timeout', 'timeout default', 'milliseconds']) assert.ok(readme.includes(text), text);
+  assert.doesNotMatch(readme, /120000 ms deadline per call/);
+});
 
 // Changed behavior: these checks fail against the effort-free baseline.
 test('AC-20 strict reasoning values and whole-selection precedence', async t => {
@@ -175,12 +306,14 @@ test('AC-20 expanded effort labels and README explain compatibility and costs', 
   for (const expected of [/\/advisor reasoning/, /xhigh/, /unsupported-reasoning/, /reasoning.*pinned|pinned.*reasoning/i, /cost.*latency/i]) assert.match(readme, expected);
 });
 
-test('AC-21 command/scoped grammar completes without catalogs and rejects excess/conflicting arguments', async t => {
+test('AC-21 AC-26 command/scoped grammar completes without catalogs and rejects excess/conflicting arguments', async t => {
   const f = await fixture(t); let lookups = 0;
   f.ctx.modelRegistry.getAvailable = () => { lookups++; throw new Error('Unexpected static lookup'); };
-  assert.deepEqual(new Set(await f.values('')), new Set(['show', 'model', 'reasoning', '--global', '--project']));
+  await writeFile(f.paths.global, '{');
+  assert.deepEqual(await f.values('timeout '), ['timeout default']);
+  assert.deepEqual(new Set(await f.values('')), new Set(['show', 'model', 'reasoning', 'timeout', '--global', '--project']));
   assert.deepEqual(await f.values('rea'), ['reasoning']); assert.deepEqual(await f.values('--p'), ['--project']);
-  assert.deepEqual(new Set(await f.values('--project ')), new Set(['--project show', '--project model', '--project reasoning']));
+  assert.deepEqual(new Set(await f.values('--project ')), new Set(['--project show', '--project model', '--project reasoning', '--project timeout']));
   assert.deepEqual(await f.values('model chat luna-large --p'), ['model chat luna-large --project']);
   assert.deepEqual(await f.values('reasoning high --g'), ['reasoning high --global']);
   for (const invalid of ['nope ', '--bad ', '--global --project ', '--global --global ', 'show extra ', 'reasoning high extra ', 'reasoning nope ', 'model chat luna-large extra ', 'model chat luna-large extra', 'model chat luna-large --global --']) assert.equal(await f.complete(invalid), null, invalid);

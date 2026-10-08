@@ -1,19 +1,19 @@
 import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { Api, Model } from '@earendil-works/pi-ai';
-import { AdvisorError, REASONING_LEVELS, parseSelection, type Reasoning, type Selection } from './protocol.ts';
+import { AdvisorError, LIMITS, REASONING_LEVELS, parseSelection, parseTimeoutMs, type Reasoning, type Selection } from './protocol.ts';
 import { argumentCompletions, type CompletionContext } from './completions.ts';
 import { assertReasoning, supportedReasoning } from './reasoning.ts';
 import { selectModel } from './model-picker.ts';
 import { loadSettings, saveSettings, settingsPaths, type LoadedSettings, type Scope } from './settings.ts';
 
-const USAGE = 'Usage: /advisor [--global|--project] [show | model <provider> <model> | reasoning [level]]. Bare command opens model selection with UI. Saves default to global.';
+const USAGE = 'Usage: /advisor [--global|--project] [show | model <provider> <model> | reasoning [level] | timeout [milliseconds|default]]. Bare command opens model selection with UI. Saves default to global.';
 export function resolveModel(ctx: ExtensionContext, pair: Selection, requireAuth: boolean): Model<Api> {
   const model = ctx.modelRegistry.find(pair.provider, pair.model);
   if (!model || model.api === 'pi-virtual' || (requireAuth && !ctx.modelRegistry.hasConfiguredAuth(model))) throw new AdvisorError('model-unavailable');
   assertReasoning(model, pair.reasoning);
   return model;
 }
-function parseCommand(args: string): { scope: Scope; show: boolean; pair?: Selection; reasoning?: Reasoning; reasoningQuery?: boolean } {
+function parseCommand(args: string): { scope: Scope; show: boolean; pair?: Selection; reasoning?: Reasoning; reasoningQuery?: boolean; timeout?: number | 'default'; timeoutQuery?: boolean } {
   const tokens = args.trim() ? args.trim().split(/\s+/) : [];
   const flags = tokens.filter(t => t.startsWith('--'));
   if (flags.length > 1 || flags.some(f => f !== '--global' && f !== '--project')) throw new AdvisorError('invalid-argument');
@@ -21,6 +21,12 @@ function parseCommand(args: string): { scope: Scope; show: boolean; pair?: Selec
   const rest = tokens.filter(t => !t.startsWith('--'));
   if (!rest.length) return { scope, show: false };
   if (rest.length === 1 && rest[0] === 'show') return { scope, show: true };
+  if (rest[0] === 'timeout') {
+    if (rest.length === 1) return { scope, show: false, timeoutQuery: true };
+    if (rest.length === 2 && rest[1] === 'default') return { scope, show: false, timeout: 'default' };
+    if (rest.length === 2 && /^[0-9]+$/.test(rest[1])) return { scope, show: false, timeout: parseTimeoutMs(Number(rest[1]), 'invalid-argument') };
+    throw new AdvisorError('invalid-argument');
+  }
   if (rest[0] === 'reasoning') {
     if (rest.length === 1) return { scope, show: false, reasoningQuery: true };
     if (rest.length === 2 && REASONING_LEVELS.includes(rest[1] as Reasoning)) return { scope, show: false, reasoning: rest[1] as Reasoning };
@@ -31,7 +37,7 @@ function parseCommand(args: string): { scope: Scope; show: boolean; pair?: Selec
 }
 function describe(loaded: LoadedSettings): string {
   const pair = loaded.settings.model;
-  return `Advisor model: ${pair ? `${pair.provider}/${pair.model} (${loaded.source})` : 'not configured'}. Reasoning: ${pair?.reasoning ?? 'default (legacy provider behavior)'}. Configuration changes affect new consultations only.`;
+  return `Advisor model: ${pair ? `${pair.provider}/${pair.model} (${loaded.source})` : 'not configured'}. Reasoning: ${pair?.reasoning ?? 'default (legacy provider behavior)'}. Timeout: ${loaded.settings.timeoutMs ?? LIMITS.timeoutMs} ms (${loaded.timeoutSource ?? 'default'}). Configuration changes affect new consultations only.`;
 }
 async function pick(ctx: ExtensionCommandContext, current?: Selection): Promise<Selection | undefined> {
   const models = ctx.modelRegistry.getAvailable().filter(m => m.api !== 'pi-virtual');
@@ -46,7 +52,7 @@ export function registerSettingsCommand(pi: ExtensionAPI): (ctx?: CompletionCont
     else pi.sendMessage({ customType: 'advisor-settings', content: text, display: true, details: { level } }, { triggerTurn: false });
   };
   pi.registerCommand('advisor', {
-    description: 'Configure the isolated advisor: picker, show, model <provider> <model>, reasoning [level], --global/--project',
+    description: 'Configure the isolated advisor: picker, show, model <provider> <model>, reasoning [level], timeout [milliseconds|default], --global/--project',
     async getArgumentCompletions(prefix) {
       const revision = contextRevision;
       const items = await argumentCompletions(prefix, context);
@@ -59,6 +65,7 @@ export function registerSettingsCommand(pi: ExtensionAPI): (ctx?: CompletionCont
         let command: ReturnType<typeof parseCommand>;
         try { command = parseCommand(args); } catch { report(ctx, USAGE, 'error'); return; }
         const loaded = await loadSettings(paths, ctx.isProjectTrusted());
+        if (command.timeoutQuery) { report(ctx, describe(loaded), 'info'); return; }
         if (command.reasoningQuery) {
           const pair = loaded.settings.model;
           if (!pair) throw new AdvisorError('not-configured');
@@ -67,9 +74,16 @@ export function registerSettingsCommand(pi: ExtensionAPI): (ctx?: CompletionCont
           report(ctx, `${describe(loaded)}\nSupported advisor reasoning: ${supportedReasoning(model).join(', ')}.\nUse /advisor [--global|--project] reasoning <level>. Higher reasoning can increase cost and latency.`, 'info');
           return;
         }
-        if (command.show || (!command.pair && command.reasoning === undefined && !ctx.hasUI)) { report(ctx, `${describe(loaded)}\n${USAGE}\nglobal: ${paths.global}\nproject: ${paths.project}${ctx.isProjectTrusted() ? '' : ' (ignored: untrusted)'}`, 'info'); return; }
+        if (command.show || (!command.pair && command.reasoning === undefined && command.timeout === undefined && !ctx.hasUI)) { report(ctx, `${describe(loaded)}\n${USAGE}\nglobal: ${paths.global}\nproject: ${paths.project}${ctx.isProjectTrusted() ? '' : ' (ignored: untrusted)'}`, 'info'); return; }
         if (command.scope === 'project' && !ctx.isProjectTrusted()) throw new AdvisorError('settings-unavailable');
         await ctx.waitForIdle();
+        if (command.timeout !== undefined) {
+          const settings = command.timeout === 'default' ? {} : { timeoutMs: command.timeout };
+          saveStarted = true;
+          await saveSettings(paths, command.scope, settings, ctx.isProjectTrusted(), 'model');
+          report(ctx, `Saved ${command.scope} settings at ${paths[command.scope]}.\n${describe(await loadSettings(paths, ctx.isProjectTrusted()))}`, 'info');
+          return;
+        }
         let pair: Selection | undefined;
         if (command.reasoning !== undefined) {
           const target = command.scope === 'global' ? await loadSettings(paths, false) : loaded;
@@ -79,7 +93,7 @@ export function registerSettingsCommand(pi: ExtensionAPI): (ctx?: CompletionCont
         if (!pair) { report(ctx, 'Advisor configuration cancelled. Settings unchanged.', 'info'); return; }
         resolveModel(ctx, pair, false);
         saveStarted = true;
-        await saveSettings(paths, command.scope, { model: pair }, ctx.isProjectTrusted());
+        await saveSettings(paths, command.scope, { model: pair }, ctx.isProjectTrusted(), 'timeoutMs');
         report(ctx, `Saved ${command.scope} settings at ${paths[command.scope]}.\n${describe(await loadSettings(paths, ctx.isProjectTrusted()))}`, 'info');
       } catch (error) {
         const message = error instanceof AdvisorError ? error.message : 'Cannot configure advisor settings.';

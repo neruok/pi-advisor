@@ -3,6 +3,7 @@ import { truncateToWidth, wrapTextWithAnsi, type Component } from '@earendil-wor
 import type { Usage } from '@earendil-works/pi-ai';
 import type { Advice, Metadata, Phase } from './session.ts';
 import type { Failure } from './protocol.ts';
+import type { ContextUsage } from './context.ts';
 
 const PREVIEW_ROWS = 8;
 type Kind = 'advisor' | 'advisor_sessions' | 'advisor_close';
@@ -17,13 +18,35 @@ function usageLine(usage: Usage | undefined, complete: boolean | undefined): str
   const tokens = usage?.totalTokens ?? 0, cost = usage?.cost?.total;
   return `${tokens} reported tokens${typeof cost === 'number' && Number.isFinite(cost) ? `, $${cost.toFixed(6)} reported cost` : ''}${complete === true ? '' : ' (incomplete: remote usage may be missing)'}`;
 }
+// Pi 1.0.4 footer thresholds, without subscription or auto-compaction labels.
+function formatTokens(count: number | undefined): string {
+  if (typeof count !== 'number' || !Number.isFinite(count)) return '?';
+  if (count < 1000) return `${count}`;
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1000000) return `${Math.round(count / 1000)}k`;
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+  return `${Math.round(count / 1000000)}M`;
+}
+function contextLine(context: ContextUsage | undefined): string {
+  return context ? `${context.percent.toFixed(1)}%/${formatTokens(context.contextWindow)}` : '?/?';
+}
+function statusLine(data: Advice | Failure): string {
+  const total = data.totalUsage ?? data.usage, latest = data.usage;
+  const input = latest.input + latest.cacheRead + latest.cacheWrite;
+  const hit = data.usageComplete && input > 0 ? `${(latest.cacheRead / input * 100).toFixed(1)}%` : '?';
+  const parts = [`↑${formatTokens(total.input)}`, `↓${formatTokens(total.output)}`, `R${formatTokens(total.cacheRead)}`];
+  if (total.cacheWrite) parts.push(`W${formatTokens(total.cacheWrite)}`);
+  parts.push(`CH${hit}`, Number.isFinite(total.cost.total) ? `$${total.cost.total.toFixed(3)}` : '$?', contextLine(data.contextUsage));
+  if (!(data.totalUsageComplete ?? data.usageComplete)) parts.push('(incomplete: remote usage may be missing)');
+  return parts.join(' ');
+}
 function header(data: Advice): string {
   return `Advisory • ${label(data.session)} • turn ${data.turns}`;
 }
 function sessionLines(entry: Metadata, expanded: boolean): string[] {
   return [
     `${label(entry.session)}${entry.busy ? ' • busy' : ''} • ${entry.turnsRemaining} turns remaining`,
-    ...(expanded ? [label(entry.label), `${label(entry.model?.provider)}/${label(entry.model?.model)} • ${entry.historyBytesRemaining} history bytes remaining`, usageLine(entry.totalUsage, entry.totalUsageComplete)] : [])
+    ...(expanded ? [label(entry.label), `${label(entry.model?.provider)}/${label(entry.model?.model)} • ${contextLine(entry.contextUsage)} advisor context`, usageLine(entry.totalUsage, entry.totalUsageComplete)] : [])
   ];
 }
 function details(value: unknown): Data | undefined {
@@ -49,13 +72,15 @@ function resultLines(kind: Kind, data: Data | undefined, options: ToolRenderResu
       if (diagnostic.httpStatus !== undefined) lines.push(theme.fg('muted', safe(`HTTP status: ${diagnostic.httpStatus}`)));
       if (diagnostic.model) lines.push(theme.fg('muted', safe(`${label(diagnostic.model.provider)}/${label(diagnostic.model.model)} • ${label(diagnostic.selectionSource)} • reasoning: ${label(diagnostic.model.reasoning ?? 'default')}`)));
     }
+    if (data.totalUsage) lines.push(theme.fg('muted', statusLine(data)));
     lines.push(theme.fg('muted', usageLine(data.usage, data.usageComplete)));
     if (options.expanded && data.totalUsage) lines.push(theme.fg('muted', `Consultation total: ${usageLine(data.totalUsage, data.totalUsageComplete)}`));
     return lines.flatMap(line => wrapTextWithAnsi(line, width));
   }
   if (kind === 'advisor' && 'response' in data) {
-    const lines = [...styled('accent', header(data)), ...styled('muted', usageLine(data.usage, data.usageComplete))];
+    const lines = [...styled('accent', header(data)), ...styled('muted', statusLine(data))];
     if (options.expanded) {
+      lines.push(...styled('muted', usageLine(data.usage, data.usageComplete)));
       lines.push(...styled('muted', `${label(data.model.provider)}/${label(data.model.model)}`));
       lines.push(...styled('muted', `Reasoning: ${data.model.reasoning ?? 'default (legacy provider behavior)'}`));
       lines.push(...styled('muted', `Consultation total: ${usageLine(data.totalUsage, data.totalUsageComplete)}`));
@@ -76,9 +101,11 @@ export function toolRenderers(kind: Kind) {
   return {
     renderCall(args: object, theme: Theme): Component {
       const session = 'session' in args ? args.session : undefined;
-      return component(() => [theme.fg('toolTitle', theme.bold(kind === 'advisor'
+      return component(width => [theme.fg('toolTitle', theme.bold(kind === 'advisor'
         ? `Advisor • ${typeof session === 'string' ? `continue ${label(session)}` : 'new consultation'}`
-        : kind === 'advisor_sessions' ? 'Advisor • active consultations' : `Advisor • close ${label(session)}`))]);
+        : kind === 'advisor_sessions' ? 'Advisor • active consultations' : `Advisor • close ${label(session)}`)),
+        ...(kind === 'advisor' && 'message' in args && typeof args.message === 'string'
+          ? wrapTextWithAnsi(theme.fg('toolOutput', `Agent → advisor:\n${safe(args.message)}`), width) : [])]);
     },
     renderResult(result: { details?: unknown }, options: ToolRenderResultOptions, theme: Theme): Component {
       return component(width => {

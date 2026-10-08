@@ -7,7 +7,7 @@ import { Compile } from 'typebox/compile';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import extension from '../advisor.ts';
 import { Consultations } from '../lib/session.ts';
-import { LIMITS } from '../lib/protocol.ts';
+import { estimateTokens } from '@earendil-works/pi-coding-agent';
 import { AdviceSchema, ListSchema } from '../lib/schemas.ts';
 import { dependencies, reply, deferred, waitFor, usage, model } from './helpers.mjs';
 
@@ -33,16 +33,16 @@ test('AC-11 oversized reply identifies its limit and keeps completed usage', asy
   assert.deepEqual(result.usage, usage); assert.equal(manager.list()[0].turns, 1);
 });
 
-test('AC-11 history preflight and pair overflow report serialized bytes', async () => {
-  const raw = 'A\n[CONTINUE]', maximum = pairBytes('Q', raw);
-  const manager = new Consultations({ historyBytes: maximum });
-  const first = await manager.send({ message: 'Q' }, dependencies(async () => reply(raw)));
-  const deps = dependencies();
-  const actual = Buffer.byteLength(JSON.stringify([{ role: 'user', text: 'Q' }, { role: 'assistant', text: raw }, { role: 'user', text: 'Q' }]));
-  limit(await manager.send({ session: first.session, message: 'Q' }, deps), 'history-bytes', maximum, actual, /new consultation.*summary/i);
+test('AC-11 AC-29 context preflight and pair overflow report model tokens', async () => {
+  const raw = 'A\n[CONTINUE]', maximum = 5000;
+  const initial = dependencies(async () => reply(raw, { usage: { ...usage, totalTokens: maximum } })); initial.getContextWindow = () => maximum;
+  const manager = new Consultations(), first = await manager.send({ message: 'Q' }, initial);
+  assert.equal(first.ok, true);
+  const deps = dependencies(), actual = maximum + estimateTokens({ role: 'user', content: 'Q', timestamp: 0 }) + 4096;
+  limit(await manager.send({ session: first.session, message: 'Q' }, deps), 'context-tokens', maximum, actual, /new consultation.*summary/i);
   assert.equal(deps.requests.length, 0); assert.equal(manager.list()[0].turns, 1);
-  const tiny = new Consultations({ historyBytes: maximum - 1 });
-  limit(await tiny.send({ message: 'Q' }, dependencies(async () => reply(raw))), 'history-bytes', maximum - 1, maximum, /new consultation.*summary/i);
+  const tiny = new Consultations(); initial.getContextWindow = () => maximum - 1;
+  limit(await tiny.send({ message: 'Q' }, initial), 'context-tokens', maximum - 1, maximum, /new consultation.*summary/i);
   assert.deepEqual(tiny.list(), []);
 });
 
@@ -127,12 +127,13 @@ test('AC-12 busy calls do not damage the owning request accounting', async t => 
   assert.equal(result.totalUsage.input, 20); assert.equal(result.totalUsageComplete, true);
 });
 
-test('AC-13 discovery shows committed capacity and independent usage snapshots, not transcripts', async () => {
+test('AC-13 AC-29 discovery shows committed capacity and independent usage snapshots, not transcripts', async () => {
   const manager = new Consultations(), raw = 'VALIDATED_ADVICE\n[CONTINUE]';
   const first = await manager.send({ message: 'Q' }, dependencies(async () => reply(raw)));
   let entry = manager.list()[0];
   assert.equal(entry.turnsRemaining, 23); assert.equal(entry.historyBytes, pairBytes('Q', raw));
-  assert.equal(entry.historyBytesRemaining, LIMITS.historyBytes - entry.historyBytes);
+  assert.equal(entry.contextUsage.contextWindow, 272000); assert.equal(entry.contextUsage.tokens, 13);
+  assert.equal(Object.hasOwn(entry, 'historyBytesRemaining'), false);
   assert.equal(entry.totalUsage.input, 10); assert.equal(entry.totalUsageComplete, true);
   assert.equal(Compile(ListSchema).Check({ ok: true, sessions: manager.list() }), true);
   assert.doesNotMatch(JSON.stringify(entry), /VALIDATED_ADVICE|response|content/);
@@ -160,7 +161,7 @@ async function toolFixture(t) {
   await writeFile(join(dir, 'advisor.json'), JSON.stringify({ model }));
   const tools = new Map(); extension({ registerTool: tool => tools.set(tool.name, tool), registerCommand() {}, on() {} });
   const ctx = { cwd: dir, mode: 'tui', hasUI: true, isProjectTrusted: () => false, modelRegistry: {
-    find: (provider, id) => ({ provider, id, api: 'mock-api' }), hasConfiguredAuth: () => true,
+    find: (provider, id) => ({ provider, id, api: 'mock-api', contextWindow: 272000 }), hasConfiguredAuth: () => true,
     streamSimple: () => ({ result: async () => reply() })
   } };
   return { tools, ctx, dir };
@@ -180,7 +181,7 @@ function rendered(component, width) {
   return lines.join('\n');
 }
 
-test('AC-14 AC-19 registered renderers show previews, full expansion, metadata and safe fallback', async t => {
+test('AC-14 AC-19 AC-30 registered renderers show questions, previews, full expansion, metadata and safe fallback', async t => {
   const f = await toolFixture(t), tool = f.tools.get('advisor');
   for (const item of f.tools.values()) { assert.equal(typeof item.renderCall, 'function'); assert.equal(typeof item.renderResult, 'function'); }
   let color = 'A'; const theme = { fg: (_key, text) => `${color}${text}`, bold: text => text };
@@ -197,7 +198,7 @@ test('AC-14 AC-19 registered renderers show previews, full expansion, metadata a
   for (const width of [1, 8, 30, 80]) { rendered(compact, width); rendered(expanded, width); }
   color = 'B'; compact.invalidate(); assert.match(rendered(compact, 80), /^B/);
   const call = tool.renderCall({ message: 'PRIVATE_INPUT\x1b', session: data.session }, theme, renderContext);
-  assert.doesNotMatch(rendered(call, 80), /PRIVATE_INPUT/);
+  assert.match(rendered(call, 80), /PRIVATE_INPUT/);
   const fallback = tool.renderResult({ content: [{ type: 'text', text: 'SECRET_RAW_ERROR' }], details: undefined }, { expanded: true, isPartial: false }, theme, renderContext);
   assert.doesNotMatch(rendered(fallback, 80), /SECRET_RAW_ERROR/);
   const listTool = f.tools.get('advisor_sessions'), list = await listTool.execute('list', {}, undefined, undefined, f.ctx);

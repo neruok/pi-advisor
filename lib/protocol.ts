@@ -1,6 +1,8 @@
 import type { AssistantMessage, Usage } from '@earendil-works/pi-ai';
+import type { ContextUsage } from './context.ts';
 
-export const LIMITS = Object.freeze({ sessions: 8, turns: 24, messageBytes: 16384, replyBytes: 16384, historyBytes: 49152, timeoutMs: 120000, maxTokens: 4096 });
+export const LIMITS = Object.freeze({ sessions: 8, turns: 24, messageBytes: 16384, replyBytes: 16384, timeoutMs: 300000, maxTokens: 4096 });
+export const MAX_TIMEOUT_MS = 2147483647;
 export const REASONING_LEVELS = ['default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Reasoning = typeof REASONING_LEVELS[number];
 export type Selection = { provider: string; model: string; reasoning?: Reasoning };
@@ -11,7 +13,7 @@ const ERRORS: Record<ErrorCode, string> = {
   busy: 'Consultation has a pending request. Wait for it before sending or closing.',
   'limit-exceeded': 'Consultation limit exceeded. Close unused sessions or start a new consultation with an explicit summary.',
   'not-configured': 'No advisor model configured. Use /advisor model <provider> <model>.',
-  'invalid-config': 'Advisor settings must be strict JSON with one optional model selection.',
+  'invalid-config': 'Advisor settings must be strict JSON with an optional model selection and integer timeoutMs.',
   'settings-unavailable': 'Cannot safely read or save advisor settings. Inspect settings and locks before retrying.',
   'model-unavailable': 'Configured advisor model is unavailable, virtual, or lacks authentication.',
   'unsupported-reasoning': 'Configured advisor reasoning is not supported by the selected model. Use /advisor reasoning to inspect supported levels.',
@@ -20,12 +22,12 @@ const ERRORS: Record<ErrorCode, string> = {
   cancelled: 'Advisor request cancelled. No exchange was committed.',
   timeout: 'Advisor request deadline exceeded. No exchange was committed.'
 };
-export type LimitResource = 'input-bytes' | 'reply-bytes' | 'history-bytes' | 'turns' | 'sessions';
+export type LimitResource = 'input-bytes' | 'reply-bytes' | 'context-tokens' | 'turns' | 'sessions';
 export type LimitDetails = { resource: LimitResource; maximum: number; actual: number };
 const LIMIT_MESSAGES: Record<LimitResource, string> = {
   'input-bytes': 'Input byte limit exceeded. Send a shorter message.',
   'reply-bytes': 'Reply byte limit exceeded. Request a shorter answer.',
-  'history-bytes': 'History byte limit exceeded. Start a new consultation with an explicit summary.',
+  'context-tokens': 'Advisor context limit exceeded. Start a new consultation with an explicit summary.',
   turns: 'Exchange limit exceeded. Start a new consultation with an explicit summary.',
   sessions: 'Active consultation limit exceeded. Close idle consultations before starting another.'
 };
@@ -43,6 +45,10 @@ export class AdvisorError extends Error {
       : limit && code === 'limit-exceeded' ? LIMIT_MESSAGES[limit.resource] : ERRORS[code]);
     this.name = 'AdvisorError'; this.code = code; this.limit = limit;
   }
+}
+export function parseTimeoutMs(value: unknown, code: 'invalid-config' | 'invalid-argument' = 'invalid-config'): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > MAX_TIMEOUT_MS) throw new AdvisorError(code);
+  return value;
 }
 export function checkLimit(resource: LimitResource, maximum: number, actual: number): void {
   if (actual > maximum) throw new AdvisorError('limit-exceeded', { resource, maximum, actual });
@@ -95,7 +101,7 @@ export function terminalDiagnostics(reply: AssistantMessage, provider: string): 
   } catch { return fallback; }
 }
 export type UsageTotals = { totalUsage: Usage; totalUsageComplete: boolean };
-export type Failure = { ok: false; error: { code: ErrorCode; message: string; limit?: LimitDetails; diagnostics?: Diagnostics }; usage: Usage; usageComplete: boolean; session?: string } & Partial<UsageTotals>;
+export type Failure = { ok: false; error: { code: ErrorCode; message: string; limit?: LimitDetails; diagnostics?: Diagnostics }; usage: Usage; usageComplete: boolean; session?: string; contextUsage?: ContextUsage } & Partial<UsageTotals>;
 export function failure(error: unknown, usage = zeroUsage(), session?: string, usageComplete = true): Failure {
   const safe = error instanceof AdvisorError ? error : new AdvisorError('provider-failed');
   return { ok: false, error: { code: safe.code, message: safe.message, ...(safe.limit ? { limit: { ...safe.limit } } : {}) }, usage, usageComplete, ...(session === undefined ? {} : { session }) };

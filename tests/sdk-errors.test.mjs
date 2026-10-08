@@ -19,7 +19,7 @@ function checked(result) {
 }
 function sdkDependencies(overrideTimeout) {
   const state = { fetches: 0, attempts: 0, timeout: undefined, terminal: undefined };
-  return { state, prepare: async () => selected, complete: async (_pair, context, options) => {
+  return { state, prepare: async () => selected, getContextWindow: () => sdkModel.contextWindow, complete: async (_pair, context, options) => {
     state.attempts++;
     state.timeout = options.timeoutMs;
     assert.equal(options.maxRetries, 0);
@@ -34,11 +34,11 @@ function sdkDependencies(overrideTimeout) {
   } };
 }
 
-test('AC-23 changed: integer manager timeout reaches the real Responses adapter mock fetch', async () => {
+test('AC-23 AC-26 changed: integer five-minute manager timeout reaches the real Responses adapter mock fetch', async () => {
   const deps = sdkDependencies();
   const result = await new Consultations().send(input, deps);
   assert.equal(Number.isInteger(deps.state.timeout), true, 'SDK request timeout must be an integer');
-  assert.ok(deps.state.timeout >= 1 && deps.state.timeout <= 120000);
+  assert.ok(deps.state.timeout > 120000 && deps.state.timeout <= 300000);
   assert.equal(deps.state.fetches, 1, deps.state.terminal.errorMessage);
   assert.equal(deps.state.attempts, 1);
   assert.equal(result.error.code, 'provider-failed');

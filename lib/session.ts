@@ -1,19 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import type { AssistantMessage, ModelsSimpleStreamOptions, Context, Usage } from '@earendil-works/pi-ai';
 import { ADVISOR_PROMPT } from './prompt.ts';
-import { AdvisorError, LIMITS, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, completionCategory, terminalDiagnostics, type Diagnostics, type Failure, type Selection, type SelectionSource, type UsageTotals } from './protocol.ts';
+import { replay, type Replay } from './replay.ts';
+import { contextUsage, type ContextUsage } from './context.ts';
+import { AdvisorError, LIMITS, parseTimeoutMs, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, completionCategory, terminalDiagnostics, type Diagnostics, type Failure, type Selection, type SelectionSource, type UsageTotals } from './protocol.ts';
 
-type Exchange = { role: 'user' | 'assistant'; text: string };
-type Session = { id: string; label: string; model?: Selection; selectionSource?: SelectionSource; history: Exchange[]; usage: Usage; totalUsageComplete: boolean; pending?: AbortController };
+type Exchange = { role: 'user' | 'assistant'; text: string; replay?: Replay; usage?: Usage };
+type Session = { id: string; label: string; model?: Selection; selectionSource?: SelectionSource; timeoutMs?: number; contextWindow?: number; history: Exchange[]; usage: Usage; totalUsageComplete: boolean; pending?: AbortController };
 export type Phase = 'preparing' | 'waiting';
 export type Dependencies = {
-  prepare: (reportSelection?: (model: Selection, source: SelectionSource) => void) => Promise<Selection>;
+  prepare: (reportSelection?: (model: Selection, source: SelectionSource) => void, reportTimeout?: (timeoutMs: number) => void) => Promise<Selection>;
+  getContextWindow: (model: Selection) => number;
   complete: (model: Selection, context: Context, options: ModelsSimpleStreamOptions) => Promise<AssistantMessage>;
   progress?: (phase: Phase) => void;
 };
-export type Advice = { ok: true; advisory: true; session: string; response: string; turns: number; model: Selection; usage: Usage; usageComplete: boolean } & UsageTotals;
-export type Metadata = { session: string; label: string; turns: number; model: Selection; busy: boolean; turnsRemaining: number; historyBytes: number; historyBytesRemaining: number } & UsageTotals;
-const size = (history: Exchange[]): number => Buffer.byteLength(JSON.stringify(history));
+export type Advice = { ok: true; advisory: true; session: string; response: string; turns: number; model: Selection; usage: Usage; usageComplete: boolean; contextUsage: ContextUsage } & UsageTotals;
+export type Metadata = { session: string; label: string; turns: number; model: Selection; busy: boolean; turnsRemaining: number; historyBytes: number; contextUsage: ContextUsage } & UsageTotals;
+const size = (history: Exchange[]): number => Buffer.byteLength(JSON.stringify(history.map(({ role, text, replay }) => ({ role, text, ...(replay ? { replay } : {}) }))));
+const retainedContext = (session: Session): ContextUsage => contextUsage(context(session.history, session.model!).messages, session.contextWindow!);
 const totals = (session: Session, pending = Boolean(session.pending)): UsageTotals => ({ totalUsage: structuredClone(session.usage), totalUsageComplete: session.totalUsageComplete && !pending });
 function progress(deps: Dependencies, phase: Phase): void {
   // Presentation failure must never replace a consultation outcome.
@@ -25,7 +29,7 @@ function context(history: Exchange[], model: Selection): Context {
     { role: 'system', content: ADVISOR_PROMPT, toolsAdded: [], timestamp: 0 },
     ...history.map(entry => entry.role === 'user'
       ? { role: 'user' as const, content: entry.text, timestamp: 0 }
-      : { role: 'assistant' as const, content: [{ type: 'text' as const, text: entry.text }], provider: model.provider, model: model.model, api: 'advisor-text', timestamp: 0, stopReason: 'stop' as const, usage: zeroUsage() })
+      : { role: 'assistant' as const, content: entry.replay ? structuredClone(entry.replay.content) : [{ type: 'text' as const, text: entry.text }], provider: model.provider, model: model.model, api: entry.replay?.api ?? 'advisor-text', timestamp: 0, stopReason: 'stop' as const, usage: structuredClone(entry.usage ?? zeroUsage()) })
   ] };
 }
 // The caller owns the race. Late provider completion can never commit consultation state.
@@ -40,15 +44,17 @@ async function interruptible<T>(operation: () => Promise<T>, signal: AbortSignal
 export class Consultations {
   private readonly sessions = new Map<string, Session>();
   private readonly limits: typeof LIMITS;
-  constructor(overrides: Partial<Pick<typeof LIMITS, 'timeoutMs' | 'historyBytes'>> = {}) {
+  constructor(overrides: Partial<Pick<typeof LIMITS, 'timeoutMs'>> = {}) {
+    if (Object.keys(overrides).some(key => key !== 'timeoutMs')) throw new AdvisorError('invalid-argument');
     for (const value of Object.values(overrides)) if (!Number.isSafeInteger(value) || value < 1) throw new AdvisorError('invalid-argument');
+    if (overrides.timeoutMs !== undefined) parseTimeoutMs(overrides.timeoutMs, 'invalid-argument');
     this.limits = { ...LIMITS, ...overrides };
   }
   list(): Metadata[] {
     return [...this.sessions.values()].filter((s): s is Session & { model: Selection } => Boolean(s.model)).map(s => ({
       session: s.id, label: s.label, turns: s.history.length / 2, model: { ...s.model }, busy: Boolean(s.pending),
       ...totals(s), turnsRemaining: this.limits.turns - s.history.length / 2,
-      historyBytes: size(s.history), historyBytesRemaining: this.limits.historyBytes - size(s.history)
+      historyBytes: size(s.history), contextUsage: retainedContext(s)
     }));
   }
   close(id: string): { ok: true; session: string } | Failure {
@@ -76,7 +82,14 @@ export class Consultations {
     let terminalHint: Pick<Diagnostics, 'category' | 'code' | 'httpStatus'> | undefined;
     let diagnosticModel: Selection | undefined;
     let selectionSource: SelectionSource = 'unknown';
+    let timeoutMs: number = this.limits.timeoutMs, finished = false;
     const started = performance.now();
+    const armDeadline = (): void => {
+      if (timer) clearTimeout(timer);
+      const remaining = timeoutMs - (performance.now() - started);
+      if (remaining <= 0) throw new AdvisorError('timeout');
+      timer = setTimeout(() => controller!.abort(new AdvisorError('timeout')), remaining);
+    };
     try {
       input = parseInput(value);
       if (signal?.aborted) throw new AdvisorError('cancelled');
@@ -87,32 +100,44 @@ export class Consultations {
       session.pending = controller;
       relay = () => controller!.abort(new AdvisorError('cancelled'));
       signal?.addEventListener('abort', relay, { once: true });
-      timer = setTimeout(() => controller!.abort(new AdvisorError('timeout')), Math.max(0, this.limits.timeoutMs - (performance.now() - started)));
+      timeoutMs = session.timeoutMs ?? this.limits.timeoutMs;
+      armDeadline();
       const pending: Exchange[] = [...session.history, { role: 'user', text: input.message }];
       checkLimit('turns', this.limits.turns, session.history.length / 2 + 1);
-      checkLimit('history-bytes', this.limits.historyBytes, size(pending));
       phase = 'preparation';
       const selected = session.model ?? await interruptible(() => {
         progress(deps, 'preparing');
         if (controller!.signal.aborted) throw controller!.signal.reason;
         return deps.prepare((model, source) => {
           // A late preparation must not mutate pinned state or the returned diagnostics.
-          if (!controller!.signal.aborted) { diagnosticModel = { ...model }; selectionSource = source; }
+          if (!finished && phase === 'preparation' && !controller!.signal.aborted) { diagnosticModel = { ...model }; selectionSource = source; }
+        }, configured => {
+          if (!finished && phase === 'preparation' && !controller!.signal.aborted) {
+            timeoutMs = parseTimeoutMs(configured);
+            armDeadline();
+          }
         });
       }, controller.signal);
+      if (performance.now() - started >= timeoutMs) throw new AdvisorError('timeout');
       const model = { ...selected };
+      const window = session.contextWindow ?? deps.getContextWindow?.(model);
+      if (!Number.isSafeInteger(window) || window < 1) throw new AdvisorError('model-unavailable');
       // Pin before awaiting model work. Reserving the map slot bounds concurrent creation.
       session.model = model;
+      session.contextWindow = window;
       session.selectionSource = selectionSource;
+      session.timeoutMs = timeoutMs;
       diagnosticModel = { ...model };
+      checkLimit('context-tokens', window, contextUsage(context(pending, model).messages, window).tokens + this.limits.maxTokens);
       phase = 'completion';
       const reply = await interruptible(() => {
         progress(deps, 'waiting');
         if (controller!.signal.aborted) throw controller!.signal.reason;
+        if (performance.now() - started >= timeoutMs) throw new AdvisorError('timeout');
         usageComplete = false;
         return deps.complete(model, context(pending, model), {
-          signal: controller!.signal, timeoutMs: Math.max(1, Math.floor(this.limits.timeoutMs - (performance.now() - started))), maxRetries: 0,
-          maxTokens: this.limits.maxTokens, cacheRetention: 'none', sessionId: session!.id,
+          signal: controller!.signal, timeoutMs: Math.max(1, Math.floor(timeoutMs - (performance.now() - started))), maxRetries: 0,
+          maxTokens: this.limits.maxTokens, cacheRetention: 'short', sessionId: session!.id,
           ...(model.reasoning && model.reasoning !== 'default' && model.reasoning !== 'off' ? { reasoning: model.reasoning } : {})
         });
       }, controller.signal);
@@ -122,14 +147,16 @@ export class Consultations {
       usage = addUsage(usage, reply.usage);
       usageComplete = true;
       const response = replyText(reply);
-      const next: Exchange[] = [...pending, { role: 'assistant', text: response }];
-      checkLimit('history-bytes', this.limits.historyBytes, size(next));
+      const opaque = replay(reply, model);
+      const next: Exchange[] = [...pending, { role: 'assistant', text: response, usage: structuredClone(usage), ...(opaque ? { replay: opaque } : {}) }];
+      const nextContext = contextUsage(context(next, model).messages, window);
+      checkLimit('context-tokens', window, nextContext.tokens);
       phase = 'commit';
       if (controller.signal.aborted || this.sessions.get(session.id) !== session) throw new AdvisorError('cancelled');
-      if (performance.now() - started >= this.limits.timeoutMs) throw new AdvisorError('timeout');
+      if (performance.now() - started >= timeoutMs) throw new AdvisorError('timeout');
       session.history = next;
       session.usage = addUsage(session.usage, usage);
-      return { ok: true, advisory: true, session: session.id, response, turns: next.length / 2, model: { ...model }, usage, usageComplete, ...totals(session, false) };
+      return { ok: true, advisory: true, session: session.id, response, turns: next.length / 2, model: { ...model }, usage, usageComplete, contextUsage: nextContext, ...totals(session, false) };
     } catch (error) {
       if (session && controller && session.history.length === 0 && this.sessions.get(session.id) === session) this.sessions.delete(session.id);
       // Only the request owner updates accounting. Rejected replies still consume resources.
@@ -145,8 +172,9 @@ export class Consultations {
         ...terminalHint,
         ...(diagnosticModel ? { model: { ...diagnosticModel }, selectionSource } : {})
       };
-      return { ...result, ...(existing ? totals(existing, existing.pending !== controller && Boolean(existing.pending)) : {}) };
+      return { ...result, ...(existing ? { ...totals(existing, existing.pending !== controller && Boolean(existing.pending)), ...(existing.contextWindow && existing.model ? { contextUsage: retainedContext(existing) } : {}) } : {}) };
     } finally {
+      finished = true;
       if (timer) clearTimeout(timer);
       if (relay) signal?.removeEventListener('abort', relay);
       if (session && controller && session.pending === controller) session.pending = undefined;

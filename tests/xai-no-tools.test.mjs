@@ -27,7 +27,7 @@ function successResponse() {
 }
 function realAdapter(reasoning, omitChoice = false, model = sdkModel) {
   const requests = [];
-  return { requests, prepare: async () => ({ provider: model.provider, model: model.id, ...(reasoning ? { reasoning } : {}) }), complete: async (_pair, context, options) => {
+  return { requests, prepare: async () => ({ provider: model.provider, model: model.id, ...(reasoning ? { reasoning } : {}) }), getContextWindow: () => model.contextWindow, complete: async (_pair, context, options) => {
     assert.equal(Number.isInteger(options.timeoutMs), true);
     assert.equal(options.maxRetries, 0);
     const { toolChoice, ...withoutChoice } = options;
@@ -59,7 +59,7 @@ for (const reasoning of [undefined, 'high']) test(`AC-24 changed: xAI real-adapt
   assert.equal(Compile(AdviceSchema).Check(next), true);
 });
 
-test('AC-25 changed: every provider omits toolChoice on creation and pinned continuation', async () => {
+test('AC-25 AC-26 AC-27 changed: every provider omits toolChoice and requests short caching on creation and pinned continuation', async () => {
   for (const provider of ['mock', 'xai', 'openai', 'anthropic', 'openai-codex', 'custom']) {
     const manager = new Consultations(), deps = dependencies();
     const selection = { provider, model: 'offline', reasoning: 'high' };
@@ -79,9 +79,9 @@ test('AC-25 changed: every provider omits toolChoice on creation and pinned cont
       assert.equal(request.options.reasoning, 'high');
       assert.equal(request.options.maxRetries, 0);
       assert.equal(request.options.maxTokens, 4096);
-      assert.equal(request.options.cacheRetention, 'none');
+      assert.equal(request.options.cacheRetention, 'short');
       assert.equal(request.options.sessionId, first.session);
-      assert.ok(Number.isInteger(request.options.timeoutMs) && request.options.timeoutMs > 0 && request.options.timeoutMs <= 120000);
+      assert.ok(Number.isInteger(request.options.timeoutMs) && request.options.timeoutMs > 120000 && request.options.timeoutMs <= 300000);
       assert.ok(request.options.signal instanceof AbortSignal);
     }
     assert.equal(deps.requests[1].context.messages.length, 4);

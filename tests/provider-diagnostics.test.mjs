@@ -150,7 +150,7 @@ test('AC-22 registered tool reports project overrides before preparation failure
   extension({ registerTool: tool => tools.set(tool.name, tool), registerCommand() {}, on() {} });
   let auth = false, response = reply(), calls = 0;
   const ctx = { cwd, isProjectTrusted: () => true, modelRegistry: {
-    find: (provider, id) => ({ provider, id, api: 'mock-api', reasoning: true }),
+    find: (provider, id) => ({ provider, id, api: 'mock-api', reasoning: true, contextWindow: 272000 }),
     hasConfiguredAuth: () => auth,
     streamSimple: () => { calls++; return { result: async () => response }; }
   } };

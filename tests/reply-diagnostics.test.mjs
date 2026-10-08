@@ -61,7 +61,7 @@ test('AC-16 tool diagnostics preserve schemas and coherent final results', async
   const tool = tools.get('advisor');
   let requests = 0;
   const ctx = { cwd: dir, isProjectTrusted: () => false, modelRegistry: {
-    find: () => ({ provider: model.provider, id: model.model, api: 'mock-api' }),
+    find: () => ({ provider: model.provider, id: model.model, api: 'mock-api', contextWindow: 272000 }),
     hasConfiguredAuth: () => true,
     streamSimple: () => { requests++; return { result: async () => reply('SECRET_REPLY', { stopReason: 'length' }) }; }
   } };

@@ -13,7 +13,7 @@ async function fixture(t) {
   const saved = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = dir; t.after(() => saved === undefined ? delete process.env.PI_CODING_AGENT_DIR : process.env.PI_CODING_AGENT_DIR = saved);
   await writeFile(join(dir, 'advisor.json'), JSON.stringify({ model })); const requests = [], notices = [];
   const ctx = { cwd: join(dir, 'workspace'), mode: 'print', hasUI: false, isProjectTrusted: () => false, waitForIdle: async () => {}, sessionManager: new Proxy({}, { get: () => { throw new Error('Parent history must not be read'); } }), executeTool: () => { throw new Error('No tools may run'); }, ui: { notify: (s, level) => notices.push({ s, level }), select: async () => undefined }, modelRegistry: {
-    find: (provider, id) => ({ provider, id, api: 'mock-api' }), hasConfiguredAuth: () => true,
+    find: (provider, id) => ({ provider, id, api: 'mock-api', contextWindow: 272000 }), hasConfiguredAuth: () => true,
     getAvailable: () => [{ provider: 'mock', id: 'chat', name: 'Chat', api: 'mock-api' }],
     streamSimple: (m, c, o) => { requests.push({ m, c, o }); return { result: async () => reply() }; }
   } }; return { dir, ctx, requests, notices, ...registrations() };

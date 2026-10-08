@@ -1,7 +1,7 @@
 import type { JsonValue, Usage } from '@earendil-works/pi-ai';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type ExtensionToolContext } from '@earendil-works/pi-coding-agent';
 import { Consultations, type Dependencies, type Metadata } from './lib/session.ts';
-import { AdvisorError, failure, object, type Failure } from './lib/protocol.ts';
+import { AdvisorError, LIMITS, failure, object, type Failure } from './lib/protocol.ts';
 import { MAIN_GUIDANCE } from './lib/prompt.ts';
 import { AdviceSchema, InputSchema, EmptyInputSchema, CloseInputSchema, ListSchema, CloseSchema } from './lib/schemas.ts';
 import { loadSettings, settingsPaths } from './lib/settings.ts';
@@ -11,14 +11,16 @@ import { toolRenderers } from './lib/render.ts';
 function dependencies(ctx: ExtensionToolContext, progress?: Dependencies['progress']): Dependencies {
   return {
     progress,
-    async prepare(reportSelection) {
+    async prepare(reportSelection, reportTimeout) {
       const loaded = await loadSettings(settingsPaths(ctx.cwd, getAgentDir()), ctx.isProjectTrusted());
       const pair = loaded.settings.model;
+      if (pair) reportSelection?.(pair, loaded.source ?? 'unknown');
+      reportTimeout?.(loaded.settings.timeoutMs ?? LIMITS.timeoutMs);
       if (!pair) throw new AdvisorError('not-configured');
-      reportSelection?.(pair, loaded.source ?? 'unknown');
       resolveModel(ctx, pair, true);
       return pair;
     },
+    getContextWindow(pair) { return resolveModel(ctx, pair, true).contextWindow; },
     async complete(pair, context, options) {
       const model = resolveModel(ctx, pair, true);
       return ctx.modelRegistry.streamSimple(model, context, options).result();
