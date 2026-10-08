@@ -12,7 +12,22 @@ From this directory, load it for one invocation:
 pi -e ./advisor.ts
 ```
 
-No profile change is required. The package is local and unpublished.
+No profile change is required.
+The unscoped npm package `pi-advisor` belongs to a different project; do not install it to get this extension.
+
+Install this package from npm:
+
+```sh
+pi install npm:@neruok/pi-advisor
+```
+
+Or install this checkout persistently:
+
+```sh
+pi install /absolute/path/to/pi-advisor
+```
+
+Local installs load the checkout in place. Restart Pi or use `/reload` after changes.
 
 Choose a physical chat model already configured in Pi:
 
@@ -269,10 +284,28 @@ Never describe an offline pass as live provider interoperability.
 ```sh
 npm ci --ignore-scripts
 npm run verify
+npm run packcheck
 ```
+
+`packcheck` creates a temporary npm archive, checks its file list, extracts it, and loads the extracted package through Pi's resource loader. It requires `tar` on PATH and makes no model requests. Tests and release scripts are not shipped.
 
 Tests use Node's test runner, mock model responses, and private temporary settings directories. TypeScript checks the extension and core. Pi and TypeBox remain host-provided runtime peers.
 
 Verified against Pi 1.0.4 on Node 24, on Linux. Offline tests verify deterministic boundaries and package loading, not reasoning quality or live provider compatibility. Paid provider tests require separate authorization.
+
+## Release checklist
+
+The initial release is `@neruok/pi-advisor@0.1.0`, licensed under MIT. The manifest selects public access on the npm registry.
+
+1. Confirm the release version and regenerate `package-lock.json` after manifest changes with `npm install --package-lock-only --ignore-scripts`.
+2. Run `npm ci --ignore-scripts`, `npm run verify`, `npm run packcheck`, and `npm publish --dry-run`. The `prepublishOnly` hook runs verification and the archive check again.
+3. Inspect the archive file list and registry name/version availability. Check that the publishing account can publish to the `@neruok` scope without sharing credentials. A dry-run does not establish account permissions.
+4. Obtain explicit authorization before committing, tagging, pushing, or running `npm publish`. No automatic release workflow is configured.
+
+The checked archive contains the TypeScript entry point, library modules, README, generated specification, package manifest, and MIT license. Pi supplies the runtime peers; no compilation step is required.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 The specification is generated at `docs/pi-advisor.md` from document `pi-advisor` in the maintainer workspace store. Author through checkout, preview, import, and compile. Do not edit the generated file.

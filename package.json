@@ -1,11 +1,16 @@
 {
-  "name": "pi-advisor",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@neruok/pi-advisor",
+  "version": "0.1.0",
+  "license": "MIT",
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "type": "module",
   "description": "Isolated, multi-turn advice for Pi agents",
+  "keywords": ["pi-package", "pi-extension", "advisor", "coding-agent"],
+  "repository": { "type": "git", "url": "git+https://github.com/neruok/pi-advisor.git" },
+  "homepage": "https://github.com/neruok/pi-advisor#readme",
+  "bugs": { "url": "https://github.com/neruok/pi-advisor/issues" },
   "pi": { "extensions": ["./advisor.ts"] },
-  "files": ["advisor.ts", "lib", "README.md", "docs"],
+  "files": ["advisor.ts", "lib/*.ts", "README.md", "docs/pi-advisor.md"],
   "engines": { "node": ">=24" },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -30,6 +35,8 @@
   "scripts": {
     "check": "node --test tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run check"
+    "verify": "npm run typecheck && npm run check",
+    "packcheck": "node scripts/check-package.mjs",
+    "prepublishOnly": "npm run verify && npm run packcheck"
   }
 }
