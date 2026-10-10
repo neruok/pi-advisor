@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DefaultResourceLoader, SettingsManager } from '@earendil-works/pi-coding-agent';
 
-// Exercise the shipped archive, not the source checkout. No provider calls or user settings.
+// AC-9 AC-33 AC-35 AC-36 AC-38: exercise the shipped archive, not the source checkout.
+// No provider calls or user settings.
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dir = await mkdtemp(join(tmpdir(), 'pi-advisor-pack-'));
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -19,6 +20,7 @@ try {
   assert.equal(packs.length, 1, 'Expected one packed package');
   const [pack] = packs;
   const expected = ['package.json', 'advisor.ts', 'README.md', 'LICENSE', 'docs/pi-advisor.md',
+    'skills/socratic-reasoning/SKILL.md', 'skills/adversarial-review/SKILL.md',
     ...(await readdir(join(root, 'lib'))).filter(name => name.endsWith('.ts')).map(name => `lib/${name}`)];
   const allowed = new Set(expected);
   const paths = pack.files.map(file => file.path);
@@ -33,6 +35,7 @@ try {
   assert.equal(manifest.publishConfig.registry, 'https://registry.npmjs.org/');
   assert.match(await readFile(join(dir, 'package/LICENSE'), 'utf8'), /MIT License/);
   assert.deepEqual(manifest.pi.extensions, ['./advisor.ts']);
+  assert.deepEqual(manifest.pi.skills, ['./skills']);
   assert.equal(manifest.dependencies, undefined, 'Runtime peers must remain host-provided');
   for (const peer of ['@earendil-works/pi-coding-agent', '@earendil-works/pi-ai', '@earendil-works/pi-tui', 'typebox']) {
     assert.equal(manifest.peerDependencies[peer], '*');
@@ -44,12 +47,19 @@ try {
     additionalExtensionPaths: [join(dir, 'package')],
   });
   await loader.reload();
+  const skills = loader.getSkills();
+  assert.deepEqual(skills.diagnostics, [], 'Packed skill must load without diagnostics');
+  assert.deepEqual(skills.skills.map(skill => skill.name).sort(), ['adversarial-review', 'socratic-reasoning']);
+  for (const skill of skills.skills) {
+    assert.equal(skill.filePath, join(dir, `package/skills/${skill.name}/SKILL.md`));
+    assert.equal(skill.disableModelInvocation, false);
+  }
   const result = loader.getExtensions();
   assert.deepEqual(result.errors, [], 'Packed extension must load without errors');
   assert.equal(result.extensions.length, 1);
   assert.deepEqual([...result.extensions[0].tools.keys()].sort(), ['advisor', 'advisor_close', 'advisor_sessions']);
   assert.deepEqual([...result.extensions[0].commands.keys()], ['advisor']);
-  console.log(`Verified ${manifest.name}@${manifest.version}: ${paths.length} shipped files; one extension, three tools, one command.`);
+  console.log(`Verified ${manifest.name}@${manifest.version}: ${paths.length} shipped files; one extension, three tools, one command, two skills.`);
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

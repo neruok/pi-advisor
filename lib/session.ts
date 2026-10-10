@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { AssistantMessage, ModelsSimpleStreamOptions, Context, Usage } from '@earendil-works/pi-ai';
-import { ADVISOR_PROMPT } from './prompt.ts';
+import { advisorPrompt } from './prompt.ts';
 import { replay, type Replay } from './replay.ts';
 import { contextUsage, type ContextUsage } from './context.ts';
-import { AdvisorError, LIMITS, parseTimeoutMs, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, completionCategory, terminalDiagnostics, type Diagnostics, type Failure, type Selection, type SelectionSource, type UsageTotals } from './protocol.ts';
+import { AdvisorError, LIMITS, parseTimeoutMs, addUsage, checkLimit, failure, parseInput, replyText, zeroUsage, completionCategory, terminalDiagnostics, type Diagnostics, type Failure, type Selection, type SelectionSource, type UsageTotals, type Preset } from './protocol.ts';
 
 type Exchange = { role: 'user' | 'assistant'; text: string; replay?: Replay; usage?: Usage };
-type Session = { id: string; label: string; model?: Selection; selectionSource?: SelectionSource; timeoutMs?: number; contextWindow?: number; history: Exchange[]; usage: Usage; totalUsageComplete: boolean; pending?: AbortController };
+type Session = { id: string; label: string; readonly preset: Preset; readonly systemPrompt: string; model?: Selection; selectionSource?: SelectionSource; timeoutMs?: number; contextWindow?: number; history: Exchange[]; usage: Usage; totalUsageComplete: boolean; pending?: AbortController };
 export type Phase = 'preparing' | 'waiting';
 export type Dependencies = {
   prepare: (reportSelection?: (model: Selection, source: SelectionSource) => void, reportTimeout?: (timeoutMs: number) => void) => Promise<Selection>;
@@ -14,19 +14,19 @@ export type Dependencies = {
   complete: (model: Selection, context: Context, options: ModelsSimpleStreamOptions) => Promise<AssistantMessage>;
   progress?: (phase: Phase) => void;
 };
-export type Advice = { ok: true; advisory: true; session: string; response: string; turns: number; model: Selection; usage: Usage; usageComplete: boolean; contextUsage: ContextUsage } & UsageTotals;
-export type Metadata = { session: string; label: string; turns: number; model: Selection; busy: boolean; historyBytes: number; contextUsage: ContextUsage } & UsageTotals;
+export type Advice = { ok: true; advisory: true; session: string; preset: Preset; response: string; turns: number; model: Selection; usage: Usage; usageComplete: boolean; contextUsage: ContextUsage } & UsageTotals;
+export type Metadata = { session: string; preset: Preset; label: string; turns: number; model: Selection; busy: boolean; historyBytes: number; contextUsage: ContextUsage } & UsageTotals;
 const size = (history: Exchange[]): number => Buffer.byteLength(JSON.stringify(history.map(({ role, text, replay }) => ({ role, text, ...(replay ? { replay } : {}) }))));
-const retainedContext = (session: Session): ContextUsage => contextUsage(context(session.history, session.model!).messages, session.contextWindow!);
+const retainedContext = (session: Session): ContextUsage => contextUsage(context(session.history, session.model!, session.systemPrompt).messages, session.contextWindow!);
 const totals = (session: Session, pending = Boolean(session.pending)): UsageTotals => ({ totalUsage: structuredClone(session.usage), totalUsageComplete: session.totalUsageComplete && !pending });
 function progress(deps: Dependencies, phase: Phase): void {
   // Presentation failure must never replace a consultation outcome.
   try { deps.progress?.(phase); } catch { /* The host owns display diagnostics. */ }
 }
 
-function context(history: Exchange[], model: Selection): Context {
+function context(history: Exchange[], model: Selection, systemPrompt: string): Context {
   return { messages: [
-    { role: 'system', content: ADVISOR_PROMPT, toolsAdded: [], timestamp: 0 },
+    { role: 'system', content: systemPrompt, toolsAdded: [], timestamp: 0 },
     ...history.map(entry => entry.role === 'user'
       ? { role: 'user' as const, content: entry.text, timestamp: 0 }
       : { role: 'assistant' as const, content: entry.replay ? structuredClone(entry.replay.content) : [{ type: 'text' as const, text: entry.text }], provider: model.provider, model: model.model, api: entry.replay?.api ?? 'advisor-text', timestamp: 0, stopReason: 'stop' as const, usage: structuredClone(entry.usage ?? zeroUsage()) })
@@ -52,7 +52,7 @@ export class Consultations {
   }
   list(): Metadata[] {
     return [...this.sessions.values()].filter((s): s is Session & { model: Selection } => Boolean(s.model)).map(s => ({
-      session: s.id, label: s.label, turns: s.history.length / 2, model: { ...s.model }, busy: Boolean(s.pending),
+      session: s.id, preset: s.preset, label: s.label, turns: s.history.length / 2, model: { ...s.model }, busy: Boolean(s.pending),
       ...totals(s),
       historyBytes: size(s.history), contextUsage: retainedContext(s)
     }));
@@ -127,14 +127,14 @@ export class Consultations {
       session.selectionSource = selectionSource;
       session.timeoutMs = timeoutMs;
       diagnosticModel = { ...model };
-      checkLimit('context-tokens', window, contextUsage(context(pending, model).messages, window).tokens);
+      checkLimit('context-tokens', window, contextUsage(context(pending, model, session.systemPrompt).messages, window).tokens);
       phase = 'completion';
       const reply = await interruptible(() => {
         progress(deps, 'waiting');
         if (controller!.signal.aborted) throw controller!.signal.reason;
         if (performance.now() - started >= timeoutMs) throw new AdvisorError('timeout');
         usageComplete = false;
-        return deps.complete(model, context(pending, model), {
+        return deps.complete(model, context(pending, model, session!.systemPrompt), {
           signal: controller!.signal, timeoutMs: Math.max(1, Math.floor(timeoutMs - (performance.now() - started))), maxRetries: 0,
           cacheRetention: 'short', sessionId: session!.id,
           ...(model.reasoning && model.reasoning !== 'default' && model.reasoning !== 'off' ? { reasoning: model.reasoning } : {})
@@ -148,14 +148,14 @@ export class Consultations {
       const response = replyText(reply);
       const opaque = replay(reply, model);
       const next: Exchange[] = [...pending, { role: 'assistant', text: response, usage: structuredClone(usage), ...(opaque ? { replay: opaque } : {}) }];
-      const nextContext = contextUsage(context(next, model).messages, window);
+      const nextContext = contextUsage(context(next, model, session.systemPrompt).messages, window);
       checkLimit('context-tokens', window, nextContext.tokens);
       phase = 'commit';
       if (controller.signal.aborted || this.sessions.get(session.id) !== session) throw new AdvisorError('cancelled');
       if (performance.now() - started >= timeoutMs) throw new AdvisorError('timeout');
       session.history = next;
       session.usage = addUsage(session.usage, usage);
-      return { ok: true, advisory: true, session: session.id, response, turns: next.length / 2, model: { ...model }, usage, usageComplete, contextUsage: nextContext, ...totals(session, false) };
+      return { ok: true, advisory: true, session: session.id, preset: session.preset, response, turns: next.length / 2, model: { ...model }, usage, usageComplete, contextUsage: nextContext, ...totals(session, false) };
     } catch (error) {
       if (session && controller && session.history.length === 0 && this.sessions.get(session.id) === session) this.sessions.delete(session.id);
       // Only the request owner updates accounting. Rejected replies still consume resources.
@@ -186,7 +186,8 @@ export class Consultations {
       if (existing.pending) throw new AdvisorError('busy');
       return existing;
     }
-    const session: Session = { id: 'adv_' + randomUUID(), label: Array.from(input.message.trim().replace(/\s+/gu, ' ')).slice(0, 80).join(''), history: [], usage: zeroUsage(), totalUsageComplete: true };
+    const preset = input.preset ?? 'default';
+    const session: Session = { id: 'adv_' + randomUUID(), preset, systemPrompt: advisorPrompt(preset), label: Array.from(input.message.trim().replace(/\s+/gu, ' ')).slice(0, 80).join(''), history: [], usage: zeroUsage(), totalUsageComplete: true };
     this.sessions.set(session.id, session);
     return session;
   }

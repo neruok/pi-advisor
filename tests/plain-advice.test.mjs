@@ -35,15 +35,15 @@ for (const [name, response] of examples) {
   });
 }
 
-test('AC-17 AC-29 AC-31 success and discovery omit status without a replacement classification', async () => {
+test('AC-17 AC-29 AC-31 AC-41 success and discovery omit status with preset as role metadata, not advice classification', async () => {
   const manager = new Consultations();
   const result = await manager.send({ message: 'Q' }, dependencies());
   assert.equal(result.ok, true);
   assert.equal(Object.hasOwn(result, 'status'), false);
-  assert.deepEqual(Object.keys(result).sort(), ['ok', 'advisory', 'session', 'response', 'turns', 'model', 'usage', 'usageComplete', 'totalUsage', 'totalUsageComplete', 'contextUsage'].sort());
+  assert.deepEqual(Object.keys(result).sort(), ['ok', 'advisory', 'session', 'preset', 'response', 'turns', 'model', 'usage', 'usageComplete', 'totalUsage', 'totalUsageComplete', 'contextUsage'].sort());
   const entry = manager.list()[0];
   assert.equal(Object.hasOwn(entry, 'status'), false);
-  assert.deepEqual(Object.keys(entry).sort(), ['session', 'label', 'turns', 'model', 'busy', 'historyBytes', 'contextUsage', 'totalUsage', 'totalUsageComplete'].sort());
+  assert.deepEqual(Object.keys(entry).sort(), ['session', 'preset', 'label', 'turns', 'model', 'busy', 'historyBytes', 'contextUsage', 'totalUsage', 'totalUsageComplete'].sort());
 });
 
 test('AC-17 joins text blocks without trimming or retaining thinking', async () => {

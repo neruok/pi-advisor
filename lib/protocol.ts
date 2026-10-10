@@ -5,10 +5,12 @@ export const LIMITS = Object.freeze({ timeoutMs: 300000 });
 export const MAX_TIMEOUT_MS = 2147483647;
 export const REASONING_LEVELS = ['default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Reasoning = typeof REASONING_LEVELS[number];
+export const PRESETS = Object.freeze(['default', 'socratic-reasoning', 'adversarial-review'] as const);
+export type Preset = typeof PRESETS[number];
 export type Selection = { provider: string; model: string; reasoning?: Reasoning };
 export type ErrorCode = 'invalid-argument' | 'not-found' | 'busy' | 'limit-exceeded' | 'not-configured' | 'invalid-config' | 'settings-unavailable' | 'model-unavailable' | 'unsupported-reasoning' | 'provider-failed' | 'invalid-response' | 'cancelled' | 'timeout';
 const ERRORS: Record<ErrorCode, string> = {
-  'invalid-argument': 'Use a nonblank message and an existing session identifier, if supplied.',
+  'invalid-argument': 'Use a nonblank message and an existing session identifier, if supplied. Preset is start-only: default, socratic-reasoning, or adversarial-review.',
   'not-found': 'Consultation not found. It may have closed or its parent session may have changed.',
   busy: 'Consultation has a pending request. Wait for it before sending or closing.',
   'limit-exceeded': 'Advisor context limit exceeded. Start a new consultation with an explicit summary.',
@@ -112,11 +114,13 @@ export function parseSelection(value: unknown): Selection {
   if (pair.reasoning !== undefined && !REASONING_LEVELS.includes(pair.reasoning as Reasoning)) throw new AdvisorError('invalid-config');
   return { provider: pair.provider as string, model: pair.model as string, ...(pair.reasoning === undefined ? {} : { reasoning: pair.reasoning as Reasoning }) };
 }
-export function parseInput(value: unknown): { message: string; session?: string; diagnostics?: boolean } {
-  const input = object(value, ['message', 'session', 'diagnostics'], 'invalid-argument');
+export function parseInput(value: unknown): { message: string; session?: string; preset?: Preset; diagnostics?: boolean } {
+  const input = object(value, ['message', 'session', 'preset', 'diagnostics'], 'invalid-argument');
   if (input.diagnostics !== undefined && typeof input.diagnostics !== 'boolean') throw new AdvisorError('invalid-argument');
   if (typeof input.message !== 'string' || !input.message.trim() || (input.session !== undefined && (typeof input.session !== 'string' || !input.session.trim()))) throw new AdvisorError('invalid-argument');
-  return { message: input.message, ...(input.session === undefined ? {} : { session: input.session as string }), ...(input.diagnostics === undefined ? {} : { diagnostics: input.diagnostics as boolean }) };
+  const hasPreset = Object.hasOwn(input, 'preset');
+  if (hasPreset && (input.session !== undefined || !PRESETS.includes(input.preset as Preset))) throw new AdvisorError('invalid-argument');
+  return { message: input.message, ...(input.session === undefined ? {} : { session: input.session as string }), ...(hasPreset ? { preset: input.preset as Preset } : {}), ...(input.diagnostics === undefined ? {} : { diagnostics: input.diagnostics as boolean }) };
 }
 export function replyText(message: AssistantMessage): string {
   if (message.stopReason === 'error' || message.stopReason === 'aborted') throw new AdvisorError('provider-failed');

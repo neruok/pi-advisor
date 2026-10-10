@@ -39,7 +39,7 @@ export default function advisor(pi: ExtensionAPI): void {
   pi.on('session_shutdown', async () => { consultations.clear(); setCompletionContext(); });
   pi.registerTool({
     name: 'advisor', label: 'Advisor', exposure: 'model-only',
-    description: 'Consult an isolated, tool-free advisor. Explain your problem, evidence and uncertainty. Omit session to start, or supply it to continue. Advice is not evidence or authorization. No automatic workspace or parent context access. Explicit host-configured model required. Provider calls may incur charges.',
+    description: 'Consult an isolated, tool-free advisor. Explain your problem, evidence and uncertainty. Omit session to start with an optional role preset; supply session without preset to continue. Advice is not evidence or authorization. No automatic workspace or parent context access. Explicit host-configured model required. Provider calls may incur charges.',
     promptGuidelines: MAIN_GUIDANCE, parameters: InputSchema, outputSchema: AdviceSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     ...toolRenderers('advisor'),

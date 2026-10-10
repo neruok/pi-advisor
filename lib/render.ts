@@ -41,11 +41,11 @@ function statusLine(data: Advice | Failure): string {
   return parts.join(' ');
 }
 function header(data: Advice): string {
-  return `Advisory • ${label(data.session)} • turn ${data.turns}`;
+  return `Advisory • ${label(data.session)} • turn ${data.turns} • preset: ${label(data.preset ?? 'default')}`;
 }
 function sessionLines(entry: Metadata, expanded: boolean): string[] {
   return [
-    `${label(entry.session)}${entry.busy ? ' • busy' : ''} • ${entry.turns} exchanges`,
+    `${label(entry.session)}${entry.busy ? ' • busy' : ''} • ${entry.turns} exchanges • preset: ${label(entry.preset ?? 'default')}`,
     ...(expanded ? [label(entry.label), `${label(entry.model?.provider)}/${label(entry.model?.model)} • ${contextLine(entry.contextUsage)} advisor context`, usageLine(entry.totalUsage, entry.totalUsageComplete)] : [])
   ];
 }

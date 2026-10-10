@@ -2,7 +2,7 @@
 
 A standalone Pi extension for isolated, multi-turn consultation. The main agent explains a problem. The advisor challenges assumptions and recommends evidence or next steps.
 
-The advisor receives only the fixed advisor prompt and explicit consultation messages. It has no tools, code access, parent conversation, or workspace instructions. It does not use pi-magic8ball.
+The advisor receives only its pinned preset prompt and explicit consultation messages. It has no tools, code access, parent conversation, or workspace instructions. It does not use pi-magic8ball.
 
 ## Try it
 
@@ -130,7 +130,7 @@ Start:
 { "message": "Objective: fix the timeout. My understanding: workers wait for a queue signal. Evidence: the queue contains work, but no worker wakes. Constraint: preserve shutdown behavior. Uncertainty: signal loss or lock contention? What should I test?" }
 ```
 
-`advisor` returns a session identifier, free-form response, committed exchange count, pinned model, per-call usage, and cumulative usage.
+`advisor` returns a session identifier, selected `preset`, free-form response, committed exchange count, pinned model, per-call usage, and cumulative usage.
 The extension constructs the structured result envelope. It does not require the model to produce JSON, markers, or a status label, and it does not interpret the advice.
 
 `usageComplete` describes this call's reported usage. `totalUsageComplete` describes the known consultation total.
@@ -164,7 +164,7 @@ Continue through `advisor`:
 
 `advisor_sessions({})` lists identifiers and metadata, not transcripts. Finish with `advisor_close({"session":"adv_<returned-id>"})`.
 
-Each entry includes committed exchange count, known cumulative usage, `totalUsageComplete`, informational `historyBytes`, and `contextUsage`.
+Each entry includes the selected `preset`, committed exchange count, known cumulative usage, `totalUsageComplete`, informational `historyBytes`, and `contextUsage`.
 Both discovery views show every listed consultation and its committed exchange count.
 `contextUsage` contains `tokens`, `contextWindow`, and `percent`, based on committed history only.
 A pending request marks cumulative usage incomplete until its outcome is known. Estimates do not guarantee another exchange will fit.
@@ -172,6 +172,84 @@ A pending request marks cumulative usage incomplete until its outcome is known. 
 Success results and session metadata have no status classification. Advice never automatically closes a consultation or executes an action.
 
 The main agent must gather requested evidence and verify factual claims. Advice is not evidence or authorization. Ask the user when an action requires approval.
+
+## Start-only role presets
+
+Add `preset` only when starting a consultation:
+
+```json
+{ "preset": "socratic-reasoning", "message": "Objective: diagnose the wakeup failure. Evidence: the queue contains work. Which check distinguishes a lost notification from a stale predicate?" }
+```
+
+| Preset | Advisor role |
+| --- | --- |
+| `default` (also when omitted) | Ordinary independent engineering advice. |
+| `socratic-reasoning` | Focused questions, competing explanations, and distinguishing checks. |
+| `adversarial-review` | Counterexamples and evidence-backed challenges to a concrete candidate, without a defect quota. |
+
+The default system prompt remains byte-for-byte unchanged. Specialized prompts keep all its shared safeguards and append short role instructions, not full skills.
+The selected preset and complete prompt are pinned for the consultation, including dispatch, context estimates, and the reusable cache prefix.
+Continue with `advisor({session, message})` and omit `preset`. Any preset supplied with `session`, even the matching value, returns `invalid-argument` before preparation or dispatch.
+Unknown values, arbitrary prompt fields, and prompt overrides are not supported. Presets are not settings and do not change the configured model or reasoning effort.
+
+Successful results and discovery entries expose `preset`; both TUI views display it. Failure and close envelopes keep their previous shape.
+Preset is caller-selected role metadata, not a classification of advice. Replies remain free-form and are not interpreted.
+Presets do not give the advisor tools, implicit workspace context, approval authority, or a guaranteed reasoning method.
+The main agent still frames the task, gathers evidence, verifies claims, observes user limits, and obtains required approval. The skills below govern that workflow.
+
+## Socratic reasoning skill
+
+The package includes an optional agent-advisor questioning loop at `skills/socratic-reasoning/SKILL.md`.
+The skill guides the main agent and selects `socratic-reasoning` when starting a consultation.
+It does not change the fixed default advisor prompt or ordinary consultation behavior.
+It is not a user interview.
+
+Load the whole checkout package to try the extension and skill together:
+
+```sh
+pi -e .
+```
+
+Loading only `pi -e ./advisor.ts` does not load the packaged skill.
+After loading the package and configuring an advisor model, invoke:
+
+```text
+/skill:socratic-reasoning investigate why the worker does not wake
+```
+
+The main agent states the objective, evidence, assumptions, and uncertainty.
+It asks focused advisor questions, gathers evidence with its own tools, and continues the same consultation with findings.
+It stops at an evidence-supported next action, a blocker, a user-owned decision, or an exchange without progress.
+It closes its idle consultation when finished. Advisor claims remain suggestions, not evidence or authorization.
+
+The skill adds no autonomous runtime loop, enforced turn limit, or billing cap.
+Calls may incur charges. Existing authorization, user limits, privacy rules, and failure behavior still apply.
+Package checks verify discovery and written instructions, not model compliance or reasoning quality.
+
+## Adversarial review skill
+
+Adversarial review challenges a concrete candidate answer. Socratic reasoning investigates an unresolved problem.
+The package includes `skills/adversarial-review/SKILL.md` for this main-agent workflow.
+It selects `adversarial-review` when starting a consultation.
+It does not change the fixed default advisor prompt or ordinary consultations.
+
+Load the whole package with `pi -e .`, or use an installed checkout after `/reload`.
+After configuring an advisor model, invoke:
+
+```text
+/skill:adversarial-review review the proposed worker-wakeup fix
+```
+
+The main agent identifies the candidate version, requirements, evidence, and review scope.
+It asks for counterexamples, failure conditions, missing tests, and unsupported claims without demanding a quota of defects.
+It verifies each concern and separates confirmed defects, refuted hypotheses, and unresolved concerns.
+It rechecks affected claims after candidate changes. A test that does not cover a concern cannot refute it.
+
+The workflow is review-only unless the user also authorized implementation.
+It stops when the requested review is complete, progress stops, or evidence, authorization, failures, or user limits block further work.
+It closes its idle consultation and reports findings and gaps. No findings is not approval or proof of safety.
+Calls may incur charges. The skill adds no enforced stopping or billing limits and promises no complete defect detection.
+Offline checks verify packaging and written instructions, not model compliance or review efficacy.
 
 ## Opt-in failure diagnostics
 
@@ -190,7 +268,7 @@ These are diagnostic hints, not proof of a remote root cause. A terminal `provid
 ## Provider prompt caching
 
 Every request uses `cacheRetention: 'short'` through Pi's provider adapter, with a stable identifier for that consultation.
-The fixed advisor prompt and validated exchanges form a reusable prefix. Continue the same session for the same issue.
+The pinned preset prompt and validated exchanges form a reusable prefix. Continue the same session for the same issue.
 Different consultations use different identifiers and do not share local history.
 
 Validated replies can retain opaque replay state in process memory, private to the consultation:
@@ -235,7 +313,7 @@ No automatic compaction, trimming, or summarization occurs.
 The settings-file limit remains 16384 bytes. Label lengths, model-picker rows, and eight-row advice previews remain unchanged.
 
 Context measurement follows Pi: use the latest positive assistant usage plus Pi's estimates for later messages.
-With no positive usage, estimate the fixed system prompt and messages with Pi's public `estimateTokens` helper.
+With no positive usage, estimate the pinned preset prompt and messages with Pi's public `estimateTokens` helper.
 Usage includes cached input and output, including reasoning when reported. It is not cumulative consultation usage or ciphertext length.
 The model window is pinned at creation. Missing or invalid window metadata fails before generation.
 These are estimates, not exact tokenization or a provider acceptance guarantee. Provider calls may incur charges, including replies rejected by validation. No monetary cap is enforced.
@@ -295,14 +373,14 @@ Verified against Pi 1.0.4 on Node 24, on Linux. Offline tests verify determinist
 
 ## Release checklist
 
-The release version is `@neruok/pi-advisor@0.1.1`, licensed under MIT. The manifest selects public access on the npm registry.
+The release version is `@neruok/pi-advisor@0.1.2`, licensed under MIT. The manifest selects public access on the npm registry.
 
 1. Confirm the release version and regenerate `package-lock.json` after manifest changes with `npm install --package-lock-only --ignore-scripts`.
 2. Run `npm ci --ignore-scripts`, `npm run verify`, `npm run packcheck`, and `npm publish --dry-run`. The `prepublishOnly` hook runs verification and the archive check again.
 3. Inspect the archive file list and registry name/version availability. Check that the publishing account can publish to the `@neruok` scope without sharing credentials. A dry-run does not establish account permissions.
 4. Obtain explicit authorization before committing, tagging, pushing, or running `npm publish`. No automatic release workflow is configured.
 
-The checked archive contains the TypeScript entry point, library modules, README, generated specification, package manifest, and MIT license. Pi supplies the runtime peers; no compilation step is required.
+The checked archive contains the TypeScript entry point, library modules, Socratic reasoning and adversarial review skills, README, generated specification, package manifest, and MIT license. Pi supplies the runtime peers; no compilation step is required.
 
 ## License
 

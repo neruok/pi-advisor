@@ -1,6 +1,6 @@
 {
   "name": "@neruok/pi-advisor",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "type": "module",
@@ -9,8 +9,8 @@
   "repository": { "type": "git", "url": "git+https://github.com/neruok/pi-advisor.git" },
   "homepage": "https://github.com/neruok/pi-advisor#readme",
   "bugs": { "url": "https://github.com/neruok/pi-advisor/issues" },
-  "pi": { "extensions": ["./advisor.ts"] },
-  "files": ["advisor.ts", "lib/*.ts", "README.md", "docs/pi-advisor.md"],
+  "pi": { "extensions": ["./advisor.ts"], "skills": ["./skills"] },
+  "files": ["advisor.ts", "lib/*.ts", "skills/**", "README.md", "docs/pi-advisor.md"],
   "engines": { "node": ">=24" },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
