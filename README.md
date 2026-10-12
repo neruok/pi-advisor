@@ -383,7 +383,7 @@ Verified against Pi 1.0.4 on Node 24, on Linux. Offline tests verify determinist
 
 ## Release checklist
 
-The release version is `@neruok/pi-advisor@0.1.2`, licensed under MIT. The manifest selects public access on the npm registry.
+The release version is `@neruok/pi-advisor@0.2.1`, licensed under MIT. The manifest selects public access on the npm registry.
 
 1. Confirm the release version and regenerate `package-lock.json` after manifest changes with `npm install --package-lock-only --ignore-scripts`.
 2. Run `npm ci --ignore-scripts`, `npm run verify`, `npm run packcheck`, and `npm publish --dry-run`. The `prepublishOnly` hook runs verification and the archive check again.
