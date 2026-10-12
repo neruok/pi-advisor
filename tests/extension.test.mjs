@@ -70,11 +70,11 @@ test('AC-7 user-only configuration supports show, save, picker, cancellation and
   await command.handler('--project', f.ctx); assert.deepEqual(JSON.parse(await readFile(join(f.ctx.cwd, '.pi', 'advisor.json'), 'utf8')), { model: { provider: 'next', model: 'selected' } }); assert.equal(f.requests.length, 0);
 });
 
-test('AC-9 standalone loader discovers extension without provider work and README covers boundaries', async t => {
+test('AC-9 CC-AC-1 standalone loader discovers extension without provider work and README covers boundaries', async t => {
   const f = await fixture(t); assert.equal(f.tools.size, 3, 'package must expose its tools before loader verification');
   const { DefaultResourceLoader, SettingsManager } = await import('@earendil-works/pi-coding-agent');
   const loader = new DefaultResourceLoader({ cwd: f.dir, agentDir: f.dir, settingsManager: SettingsManager.inMemory(), noSkills: true, noPromptTemplates: true, noThemes: true, additionalExtensionPaths: [new URL('../', import.meta.url).pathname] });
   await loader.reload(); const result = loader.getExtensions(); assert.equal(result.errors.length, 0); assert.equal(result.extensions.length, 1); assert.equal(result.extensions[0].tools.size, 3); assert.equal(result.extensions[0].commands.size, 1);
-  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')); assert.equal(packageJson.dependencies, undefined); assert.equal(packageJson.peerDependencies['@earendil-works/pi-coding-agent'], '*');
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')); assert.deepEqual(Object.keys(packageJson.dependencies), ['@neruok/pi-common'], 'CC-AC-1: only the common library is a runtime dependency, never host SDKs'); assert.equal(packageJson.peerDependencies['@earendil-works/pi-coding-agent'], '*');
   const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8'); for (const term of ['advisor_close', 'advisor_sessions', '/advisor model', 'ephemeral', 'transcript', '16384', 'authorization']) assert.ok(readme.includes(term), term);
 });

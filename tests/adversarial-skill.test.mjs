@@ -14,7 +14,7 @@ async function skillText() {
 }
 
 // Check discovery and authored instructions, not model compliance or review quality.
-test('AC-36 package discovers both advisor skills with host-provided resources', async t => {
+test('AC-36 CC-AC-1 package discovers both advisor skills with host-provided resources', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'advisor-adversarial-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const loader = new DefaultResourceLoader({
@@ -35,7 +35,7 @@ test('AC-36 package discovers both advisor skills with host-provided resources',
   const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   assert.deepEqual(manifest.pi.skills, ['./skills']);
   assert.ok(manifest.files.includes('skills/**'));
-  assert.equal(manifest.dependencies, undefined);
+  assert.deepEqual(Object.keys(manifest.dependencies), ['@neruok/pi-common'], 'CC-AC-1: only the common library is a runtime dependency, never host SDKs');
 });
 
 test('AC-37 skill frames a versioned candidate and requests concrete criticism without a defect quota', async () => {

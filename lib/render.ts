@@ -5,10 +5,11 @@ import type { Advice, Metadata, Phase } from './session.ts';
 import type { Failure } from './protocol.ts';
 import type { ContextUsage } from './context.ts';
 
+import { sanitizeText as safe } from '@neruok/pi-common/presentation';
+
 const PREVIEW_ROWS = 8;
 type Kind = 'advisor' | 'advisor_sessions' | 'advisor_close';
 type Data = Advice | Failure | { ok: true; sessions: Metadata[] } | { ok: true; session: string };
-const safe = (text: string): string => text.replace(/\t/g, ' ').replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/gu, '');
 const value = (text: unknown): string => typeof text === 'string' ? safe(text) : '?';
 const label = (text: unknown): string => value(text).replace(/\n/g, ' ');
 function component(lines: (width: number) => string[]): Component {

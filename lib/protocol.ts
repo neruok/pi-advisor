@@ -3,7 +3,8 @@ import type { ContextUsage } from './context.ts';
 
 export const LIMITS = Object.freeze({ timeoutMs: 300000 });
 export const MAX_TIMEOUT_MS = 2147483647;
-export const REASONING_LEVELS = ['default', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+import { REASONING_LEVELS } from '@neruok/pi-common/model-types';
+export { REASONING_LEVELS };
 export type Reasoning = typeof REASONING_LEVELS[number];
 export const PRESETS = Object.freeze(['default', 'socratic-reasoning', 'adversarial-review'] as const);
 export type Preset = typeof PRESETS[number];

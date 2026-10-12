@@ -6,6 +6,9 @@ import { assertReasoning, supportedReasoning } from './reasoning.ts';
 import { selectModel } from './model-picker.ts';
 import { loadSettings, saveSettings, settingsPaths, type LoadedSettings, type Scope } from './settings.ts';
 
+import { scopedArguments, completionContext } from '@neruok/pi-common/commands';
+import { reportCommand } from '@neruok/pi-common/presentation';
+
 const USAGE = 'Usage: /advisor [--global|--project] [show | model <provider> <model> | reasoning [level] | timeout [milliseconds|default]]. Bare command opens model selection with UI. Saves default to global.';
 export function resolveModel(ctx: ExtensionContext, pair: Selection, requireAuth: boolean): Model<Api> {
   const model = ctx.modelRegistry.find(pair.provider, pair.model);
@@ -14,11 +17,9 @@ export function resolveModel(ctx: ExtensionContext, pair: Selection, requireAuth
   return model;
 }
 function parseCommand(args: string): { scope: Scope; show: boolean; pair?: Selection; reasoning?: Reasoning; reasoningQuery?: boolean; timeout?: number | 'default'; timeoutQuery?: boolean } {
-  const tokens = args.trim() ? args.trim().split(/\s+/) : [];
-  const flags = tokens.filter(t => t.startsWith('--'));
-  if (flags.length > 1 || flags.some(f => f !== '--global' && f !== '--project')) throw new AdvisorError('invalid-argument');
-  const scope = flags[0] === '--project' ? 'project' : 'global';
-  const rest = tokens.filter(t => !t.startsWith('--'));
+  const parsed = scopedArguments(args);
+  if (!parsed) throw new AdvisorError('invalid-argument');
+  const { scope, args: rest } = parsed;
   if (!rest.length) return { scope, show: false };
   if (rest.length === 1 && rest[0] === 'show') return { scope, show: true };
   if (rest[0] === 'timeout') {
@@ -45,18 +46,14 @@ async function pick(ctx: ExtensionCommandContext, current?: Selection): Promise<
   return selectModel(ctx, 'Advisor model', models, current);
 }
 export function registerSettingsCommand(pi: ExtensionAPI): (ctx?: CompletionContext) => void {
-  let context: CompletionContext | undefined;
-  let contextRevision = 0;
+  const completion = completionContext<CompletionContext>(argumentCompletions);
   const report = (ctx: ExtensionCommandContext, text: string, level: 'info' | 'error'): void => {
-    if (ctx.hasUI) ctx.ui.notify(text, level);
-    else pi.sendMessage({ customType: 'advisor-settings', content: text, display: true, details: { level } }, { triggerTurn: false });
+    reportCommand(pi, ctx, 'advisor-settings', text, level);
   };
   pi.registerCommand('advisor', {
     description: 'Configure the isolated advisor: picker, show, model <provider> <model>, reasoning [level], timeout [milliseconds|default], --global/--project',
     async getArgumentCompletions(prefix) {
-      const revision = contextRevision;
-      const items = await argumentCompletions(prefix, context);
-      return revision === contextRevision ? items : null;
+      return completion.complete(prefix);
     },
     async handler(args, ctx) {
       const paths = settingsPaths(ctx.cwd, getAgentDir());
@@ -101,5 +98,5 @@ export function registerSettingsCommand(pi: ExtensionAPI): (ctx?: CompletionCont
       }
     }
   });
-  return ctx => { context = ctx; contextRevision++; };
+  return ctx => completion.set(ctx);
 }
