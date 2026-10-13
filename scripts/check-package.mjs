@@ -45,7 +45,7 @@ try {
   const commonRoot = fileURLToPath(new URL('../', import.meta.resolve('@neruok/pi-common/settings')));
   const commonArchive = join(dir, 'common-archive');
   await mkdir(commonArchive);
-  const commonOutput = JSON.parse(execFileSync(npm, ['pack', '--json', '--ignore-scripts', '--pack-destination', commonArchive], { cwd: commonRoot, encoding: 'utf8', timeout: 60000 }));
+  const commonOutput = JSON.parse(execFileSync(npm, ['pack', '--json', '--ignore-scripts', '--dry-run=false', '--pack-destination', commonArchive], { cwd: commonRoot, encoding: 'utf8', timeout: 60000 }));
   const [commonPack] = Array.isArray(commonOutput) ? commonOutput : Object.values(commonOutput);
   assert.equal(commonPack.bundled.length, 0);
   const installed = join(dir, 'package/node_modules/@neruok/pi-common');

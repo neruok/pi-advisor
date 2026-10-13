@@ -1,11 +1,6 @@
 ---
 name: socratic-reasoning
-description: >
-  Use an agent-advisor questioning loop for debugging, diagnosis, or design when
-  assumptions or competing explanations need evidence. The main agent gathers
-  evidence and continues an isolated advisor consultation. Use for uncertain
-  engineering problems or an explicit request for Socratic reasoning, not a
-  user interview, routine implementation, or repeated requests for agreement.
+description: "Use an agent-advisor questioning loop for uncertain debugging, diagnosis, or design, or explicit Socratic reasoning. Gather evidence for assumptions/competing explanations. Not interviews, routine coding, or agreement loops."
 compatibility: Requires Pi with preset-aware advisor, advisor_sessions, and advisor_close tools and a configured advisor model.
 ---
 

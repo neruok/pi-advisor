@@ -1,11 +1,6 @@
 ---
 name: adversarial-review
-description: >
-  Challenge a proposed fix, design, or implementation through an isolated advisor.
-  Seek concrete counterexamples, failure conditions, missing tests, and unsupported
-  claims, then verify findings with the main agent's tools. Use before accepting a
-  candidate answer or for an explicit adversarial review, not open-ended diagnosis,
-  a user interview, or repeated requests for approval.
+description: "Use an isolated advisor to seek counterexamples to a candidate answer/fix/design, or for explicit adversarial review. Verify findings locally. Not open-ended diagnosis, interviews, or approval loops."
 compatibility: Requires Pi with preset-aware advisor, advisor_sessions, and advisor_close tools and a configured advisor model.
 ---
 

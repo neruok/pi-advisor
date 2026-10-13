@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -25,4 +26,13 @@ test('COMMON-AC-1 release pins the verified common registry artifact without a s
   assert.equal(common.integrity, 'sha512-8I3zVAP6kO1QgWbgiosEQIPfoQrSiwu04ustT7OhYcPYDXnsPkRpwYmluMv/dtSeE7TEaDGp86ba4kQjRiA7VQ==');
   assert.equal(common.dependencies, undefined);
   for (const path of Object.keys(lock.packages)) assert.ok(!path.startsWith('../'), path);
+});
+
+test('COMMON-AC-1 extracted archive gate succeeds when npm dry-run is inherited', () => {
+  const output = execFileSync(process.execPath, ['scripts/check-package.mjs'], {
+    cwd: new URL('../', import.meta.url),
+    env: { ...process.env, npm_config_dry_run: 'true', PI_OFFLINE: '1', PI_TELEMETRY: '0' },
+    encoding: 'utf8', timeout: 60000,
+  });
+  assert.ok(output.includes(`Verified ${manifest.name}@${manifest.version}:`), output);
 });
